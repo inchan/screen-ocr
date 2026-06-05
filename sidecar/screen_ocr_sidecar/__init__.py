@@ -1,0 +1,2 @@
+"""Screen OCR PaddleOCR sidecar."""
+

@@ -1,0 +1,187 @@
+import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
+
+from PIL import Image, ImageDraw
+
+from screen_ocr_sidecar.ocr import normalize_predict_result, recognize_image, recognized_text
+from screen_ocr_sidecar.preprocess import preprocess_image_for_ocr
+from screen_ocr_sidecar.worker import handle_request
+
+
+class OCRContractTests(unittest.TestCase):
+    def test_normalizes_paddle_v3_mapping_result(self):
+        raw = [
+            {
+                "rec_texts": ["OCR 테스트", "Hello 123"],
+                "rec_scores": [0.97, 0.95],
+                "rec_polys": [
+                    [[0, 0], [90, 0], [90, 20], [0, 20]],
+                    [[0, 30], [100, 30], [100, 50], [0, 50]],
+                ],
+            }
+        ]
+
+        lines = normalize_predict_result(raw)
+
+        self.assertEqual(
+            lines,
+            [
+                {
+                    "text": "OCR 테스트",
+                    "score": 0.97,
+                    "box": [[0, 0], [90, 0], [90, 20], [0, 20]],
+                },
+                {
+                    "text": "Hello 123",
+                    "score": 0.95,
+                    "box": [[0, 30], [100, 30], [100, 50], [0, 50]],
+                },
+            ],
+        )
+
+    def test_recognize_image_uses_injected_ocr_factory(self):
+        image_path = Path("fixtures/ocr/mixed-ko-en-simple.png")
+
+        document = recognize_image(image_path, ocr_factory=lambda: FakeOCR())
+
+        self.assertEqual(document["image_path"], str(image_path))
+        self.assertEqual(document["text"], "OCR 테스트\nHello 123")
+        self.assertEqual(document["line_count"], 2)
+        self.assertEqual(document["lines"][0]["score"], 0.97)
+
+    def test_recognize_image_limits_detector_input_for_screen_crops(self):
+        image_path = Path("fixtures/ocr/mixed-ko-en.png")
+        ocr = FakeOCR()
+
+        recognize_image(image_path, ocr_factory=lambda: ocr)
+
+        self.assertEqual(
+            ocr.predict_options,
+            {
+                "text_det_limit_side_len": 736,
+                "text_det_limit_type": "max",
+            },
+        )
+
+    def test_recognized_text_skips_empty_lines(self):
+        lines = [
+            {"text": " OCR 테스트 ", "score": 0.9, "box": []},
+            {"text": "  ", "score": 0.1, "box": []},
+            {"text": "Hello", "score": 0.8, "box": []},
+        ]
+
+        self.assertEqual(recognized_text(lines), "OCR 테스트\nHello")
+
+    def test_normalizes_array_like_boxes_to_json_values(self):
+        raw = [
+            {
+                "rec_texts": ["Hello"],
+                "rec_scores": [0.99],
+                "rec_boxes": ArrayLike([[[1, 2], [3, 4]]]),
+            }
+        ]
+
+        lines = normalize_predict_result(raw)
+
+        self.assertEqual(lines[0]["box"], [[1, 2], [3, 4]])
+
+    def test_worker_request_reuses_loaded_ocr_instance(self):
+        ocr = FakeOCR()
+
+        response = handle_request(
+            {"id": "req-1", "image_path": "fixtures/ocr/mixed-ko-en-simple.png"},
+            ocr,
+        )
+
+        self.assertTrue(response["ok"])
+        self.assertEqual(response["id"], "req-1")
+        self.assertEqual(response["text"], "OCR 테스트\nHello 123")
+        self.assertEqual(response["line_count"], 2)
+        self.assertEqual(ocr.predict_call_count, 1)
+        self.assertEqual(response["diagnostics"]["preprocess_applied"], 0)
+        self.assertEqual(response["metadata"]["preprocess_status"], "skipped_small")
+        self.assertGreaterEqual(response["request_elapsed_ms"], 0)
+
+    def test_worker_request_reports_missing_image_path(self):
+        response = handle_request({"id": "req-2"}, FakeOCR())
+
+        self.assertFalse(response["ok"])
+        self.assertEqual(response["id"], "req-2")
+        self.assertIn("image_path", response["error"])
+
+    def test_worker_request_can_disable_preprocessing_for_benchmark_baseline(self):
+        response = handle_request(
+            {
+                "id": "req-3",
+                "image_path": "fixtures/ocr/mixed-ko-en-simple.png",
+                "preprocess": False,
+            },
+            FakeOCR(),
+        )
+
+        self.assertTrue(response["ok"])
+        self.assertEqual(response["metadata"]["preprocess_status"], "disabled")
+        self.assertEqual(response["diagnostics"]["preprocess_applied"], 0)
+
+    def test_preprocess_trims_large_mostly_empty_image(self):
+        with TemporaryDirectory() as directory:
+            source = Path(directory) / "large-empty.png"
+            image = Image.new("RGB", (1600, 1000), "white")
+            draw = ImageDraw.Draw(image)
+            draw.rectangle((720, 430, 890, 470), fill="black")
+            draw.rectangle((720, 500, 980, 540), fill="black")
+            image.save(source)
+
+            result = preprocess_image_for_ocr(source)
+
+            self.assertTrue(result.applied)
+            self.assertEqual(result.original_width, 1600)
+            self.assertEqual(result.original_height, 1000)
+            self.assertLess(result.preprocessed_width, 400)
+            self.assertLess(result.preprocessed_height, 300)
+            self.assertTrue(Path(result.ocr_image_path).exists())
+            self.assertIn(".preprocessed", result.ocr_image_path)
+
+    def test_preprocess_keeps_small_image_path(self):
+        with TemporaryDirectory() as directory:
+            source = Path(directory) / "small.png"
+            Image.new("RGB", (320, 120), "white").save(source)
+
+            result = preprocess_image_for_ocr(source)
+
+            self.assertFalse(result.applied)
+            self.assertEqual(result.status, "skipped_small")
+            self.assertEqual(result.ocr_image_path, str(source))
+
+
+class FakeOCR:
+    def __init__(self):
+        self.predict_options = None
+        self.predict_call_count = 0
+
+    def predict(self, image_path, **kwargs):
+        self.predict_call_count += 1
+        self.predict_options = kwargs
+        return [
+            {
+                "rec_texts": ["OCR 테스트", "Hello 123"],
+                "rec_scores": [0.97, 0.95],
+                "rec_boxes": [
+                    [0, 0, 90, 20],
+                    [0, 30, 100, 50],
+                ],
+            }
+        ]
+
+
+class ArrayLike:
+    def __init__(self, value):
+        self.value = value
+
+    def tolist(self):
+        return self.value
+
+
+if __name__ == "__main__":
+    unittest.main()

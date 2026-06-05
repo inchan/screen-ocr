@@ -1,0 +1,13 @@
+[project]
+name = "screen-ocr-sidecar"
+version = "0.1.0"
+description = "Local PaddleOCR sidecar for ScreenOCR."
+requires-python = ">=3.9,<3.14"
+dependencies = []
+
+[project.optional-dependencies]
+paddleocr = [
+  "paddleocr==3.6.0",
+  "paddlepaddle==3.3.0",
+]
+

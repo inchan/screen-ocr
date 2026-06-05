@@ -1,0 +1,19 @@
+.build/
+.swiftpm/
+.venv*/
+__pycache__/
+*.pyc
+.pytest_cache/
+.DS_Store
+
+# Local OCR/model/runtime outputs
+.ocr-cache/
+artifacts/
+tmp/
+dist/
+
+# OMX runtime state should not become project source.
+.omx/
+
+# Browser MCP runtime artifacts
+.playwright-mcp/
