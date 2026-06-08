@@ -750,10 +750,17 @@ private final class CopyToastPresenter {
     private let toastWidth: CGFloat = 232
 
     /// Sizes the toast to its content: single-line stays compact, the multi-line stage list
-    /// grows by line count.
+    /// grows by line count and reserves room for the divider under the total row.
     private func toastSize(for message: String) -> CGSize {
         let lineCount = max(1, message.split(separator: "\n", omittingEmptySubsequences: false).count)
-        let height: CGFloat = lineCount == 1 ? 44 : CGFloat(lineCount) * 19 + 20
+        if lineCount == 1 {
+            return CGSize(width: toastWidth, height: 44)
+        }
+        let height = ToastView.topInset
+            + ToastView.lineHeight                       // total row
+            + ToastView.dividerGap                       // divider under total
+            + CGFloat(lineCount - 1) * ToastView.lineHeight
+            + ToastView.bottomInset
         return CGSize(width: toastWidth, height: height)
     }
 
@@ -843,6 +850,12 @@ private final class CopyToastPresenter {
 }
 
 private final class ToastView: NSView {
+    static let topInset: CGFloat = 9
+    static let bottomInset: CGFloat = 9
+    static let lineHeight: CGFloat = 18
+    static let dividerGap: CGFloat = 9
+    static let horizontalInset: CGFloat = 12
+
     private let message: String
     private var isMultiline: Bool { message.contains("\n") }
 
@@ -860,35 +873,56 @@ private final class ToastView: NSView {
         nil
     }
 
+    // Flip so multi-line layout reads top-to-bottom in the natural order.
+    override var isFlipped: Bool { true }
+
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
 
-        let paragraphStyle = NSMutableParagraphStyle()
-        paragraphStyle.lineBreakMode = .byTruncatingTail
-
-        let attributes: [NSAttributedString.Key: Any]
-        let rect: CGRect
-        if isMultiline {
-            // Left-aligned with monospaced digits so the elapsed-time column lines up; extra
-            // line spacing for legibility.
-            paragraphStyle.alignment = .left
-            paragraphStyle.lineSpacing = 3
-            attributes = [
-                .font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium),
-                .foregroundColor: NSColor.labelColor,
-                .paragraphStyle: paragraphStyle
-            ]
-            rect = bounds.insetBy(dx: 12, dy: 10)
-        } else {
-            paragraphStyle.alignment = .center
-            attributes = [
-                .font: NSFont.systemFont(ofSize: 14, weight: .semibold),
-                .foregroundColor: NSColor.labelColor,
-                .paragraphStyle: paragraphStyle
-            ]
-            rect = bounds.insetBy(dx: 12, dy: 13)
+        guard isMultiline else {
+            drawCenteredSingleLine()
+            return
         }
-        message.draw(in: rect, withAttributes: attributes)
+
+        let lines = message.components(separatedBy: "\n")
+        let font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium)
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.alignment = .left
+        paragraph.lineBreakMode = .byTruncatingTail
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: NSColor.labelColor,
+            .paragraphStyle: paragraph
+        ]
+
+        let textWidth = bounds.width - Self.horizontalInset * 2
+        var y = Self.topInset
+        for (index, line) in lines.enumerated() {
+            line.draw(
+                in: CGRect(x: Self.horizontalInset, y: y, width: textWidth, height: Self.lineHeight),
+                withAttributes: attributes
+            )
+            y += Self.lineHeight
+            // Divider under the total (first) row to set it apart from the stage list.
+            if index == 0 {
+                let dividerY = y + Self.dividerGap / 2
+                NSColor.separatorColor.setFill()
+                CGRect(x: Self.horizontalInset, y: dividerY, width: textWidth, height: 1).fill()
+                y += Self.dividerGap
+            }
+        }
+    }
+
+    private func drawCenteredSingleLine() {
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.alignment = .center
+        paragraph.lineBreakMode = .byTruncatingTail
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 14, weight: .semibold),
+            .foregroundColor: NSColor.labelColor,
+            .paragraphStyle: paragraph
+        ]
+        message.draw(in: bounds.insetBy(dx: 12, dy: 13), withAttributes: attributes)
     }
 }
 

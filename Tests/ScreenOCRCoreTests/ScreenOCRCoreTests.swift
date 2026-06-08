@@ -372,7 +372,7 @@ final class ScreenOCRCoreTests: XCTestCase {
         XCTAssertEqual(progress.currentIndex, 2)
     }
 
-    func testOCRStageToastRendersActiveStageWithLiveTimeAndPendingDashes() {
+    func testOCRStageToastShowsOnlyStartedStagesAndGrowsOneRowAtATime() {
         let progress = OCRStageProgress(
             completedMs: [.screenCapture: 40, .pngWrite: 11, .preprocess: 30],
             active: .recognize,
@@ -383,13 +383,25 @@ final class ScreenOCRCoreTests: XCTestCase {
         let message = OCRStageToast.render(progress: progress, activeElapsedMs: 12_600)
         let lines = message.split(separator: "\n").map(String.init)
 
+        // Pending stages (clipboard) are omitted — only started/completed rows appear.
+        XCTAssertEqual(lines.count, 5)
         // total = 40+11+30 + 12600 = 12681ms -> 12.7초
         XCTAssertEqual(lines[0], "⏳ 전체 · 12.7초")
         XCTAssertEqual(lines[1], "✓ 화면 캡처 · 0.0초")
         XCTAssertEqual(lines[2], "✓ PNG 저장 · 0.0초")
         XCTAssertEqual(lines[3], "✓ 전처리 · 0.0초")
         XCTAssertEqual(lines[4], "▶ 검출+인식 · 12.6초")
-        XCTAssertEqual(lines[5], "· 클립보드 복사 · —")
+    }
+
+    func testOCRStageToastStartsWithJustTotalAndFirstStage() {
+        let progress = OCRStageProgress(
+            completedMs: [.screenCapture: 40],
+            active: .pngWrite
+        )
+        let lines = OCRStageToast.render(progress: progress, activeElapsedMs: 5)
+            .split(separator: "\n").map(String.init)
+        XCTAssertEqual(lines.count, 3) // total + 화면 캡처 + (active) PNG 저장
+        XCTAssertEqual(lines[2], "▶ PNG 저장 · 0.0초")
     }
 
     func testOCRStageToastMarksCompleteAndShowsBatchPosition() {

@@ -214,9 +214,11 @@ public struct OCRStageProgress: Equatable, Sendable {
 }
 
 public enum OCRStageToast {
-    /// Renders the multi-line toast: a total line plus one line per stage. Completed stages show
-    /// their frozen duration, the active stage shows the live elapsed time, pending stages show
-    /// a dash. The total is the sum of all stage times (frozen + the active stage's live time).
+    /// Renders the multi-line toast: a total line followed by one line per stage that has
+    /// started — completed stages show their frozen duration, the active stage shows live
+    /// elapsed time, and stages that have not begun yet are omitted so the list grows one row
+    /// at a time. The total is the sum of all stage times (frozen + the active stage's live
+    /// time). The first line is always the total; the app draws a divider beneath it.
     public static func render(progress: OCRStageProgress, activeElapsedMs: Int) -> String {
         let activeMs = progress.active == nil ? 0 : max(0, activeElapsedMs)
         let totalMs = progress.completedMs.values.reduce(0, +) + activeMs
@@ -230,9 +232,8 @@ public enum OCRStageToast {
                 lines.append("✓ \(stage.label) · \(seconds(ms))")
             } else if progress.active == stage {
                 lines.append("▶ \(stage.label) · \(seconds(activeMs))")
-            } else {
-                lines.append("· \(stage.label) · —")
             }
+            // Stages that have not started yet are not shown — the list appears one row at a time.
         }
         return lines.joined(separator: "\n")
     }
