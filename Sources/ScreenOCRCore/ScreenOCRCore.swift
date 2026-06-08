@@ -697,6 +697,7 @@ public actor PersistentPythonSidecarOCR: OCRRecognizing {
     private var stdinHandle: FileHandle?
     private var reader: WorkerLineReader?
     private var ready: PersistentOCRWorkerReady?
+    private var startTask: Task<PersistentOCRWorkerReady, Error>?
     private var stageHandler: (@Sendable (OCRStage) -> Void)?
 
     /// Installs a callback invoked as the worker streams per-stage progress events for the next
@@ -807,6 +808,21 @@ public actor PersistentPythonSidecarOCR: OCRRecognizing {
             return ready
         }
 
+        // Dedupe concurrent starts: prewarm and the first request can both reach here while the
+        // worker is still loading. Without this, the second caller's `stopWorker()` would kill
+        // the worker the first caller is mid-read on ("closed output unexpectedly"). Join the
+        // in-flight start instead of spawning a competing one.
+        if let startTask {
+            return try await startTask.value
+        }
+
+        let task = Task { try await self.startWorker() }
+        startTask = task
+        defer { startTask = nil }
+        return try await task.value
+    }
+
+    private func startWorker() async throws -> PersistentOCRWorkerReady {
         stopWorker()
 
         let workerProcess = Process()
