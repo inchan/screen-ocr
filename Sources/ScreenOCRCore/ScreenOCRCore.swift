@@ -566,6 +566,13 @@ public actor PersistentPythonSidecarOCR: OCRRecognizing {
         self.requestTimeoutMs = max(1, requestTimeoutMs)
     }
 
+    /// Worker startup (process spawn + model load) is legitimately slower than a single OCR
+    /// request, so it gets its own floor rather than inheriting a tight per-request timeout.
+    /// A large per-request timeout still applies; only an unusually small one is widened here.
+    private var startupTimeoutMs: Int {
+        max(requestTimeoutMs, 5000)
+    }
+
     private static func configuredTimeoutMs() -> Int {
         if let raw = ProcessInfo.processInfo.environment["SCREEN_OCR_OCR_TIMEOUT_MS"],
            let value = Int(raw.trimmingCharacters(in: .whitespaces)),
@@ -671,7 +678,7 @@ public actor PersistentPythonSidecarOCR: OCRRecognizing {
 
         let readyData: Data
         do {
-            readyData = try await readResponseLine(using: workerReader, timeoutMs: requestTimeoutMs)
+            readyData = try await readResponseLine(using: workerReader, timeoutMs: startupTimeoutMs)
         } catch {
             stopWorker()
             throw error
@@ -765,12 +772,29 @@ final class WorkerLineReader: @unchecked Sendable {
                 return line
             }
 
-            let chunk = try handle.read(upToCount: 4096)
-            guard let chunk, !chunk.isEmpty else {
+            let chunk = try readAvailableChunk()
+            guard !chunk.isEmpty else {
                 throw PersistentPythonSidecarOCRError.unexpectedEOF
             }
             buffer.append(chunk)
         }
+    }
+
+    /// Reads whatever is currently available on the pipe via a single `read(2)` syscall.
+    /// Unlike `FileHandle.read(upToCount:)` — which blocks until the requested count is
+    /// filled or EOF — this returns as soon as one or more bytes arrive, so a line that is
+    /// already in the pipe is delivered immediately. Returns empty `Data` on EOF.
+    private func readAvailableChunk() throws -> Data {
+        let capacity = 4096
+        var storage = Data(count: capacity)
+        let bytesRead = storage.withUnsafeMutableBytes { raw -> Int in
+            guard let base = raw.baseAddress else { return 0 }
+            return read(handle.fileDescriptor, base, capacity)
+        }
+        if bytesRead < 0 {
+            throw PersistentPythonSidecarOCRError.unexpectedEOF
+        }
+        return storage.prefix(bytesRead)
     }
 }
 
