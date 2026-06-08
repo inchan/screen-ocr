@@ -239,7 +239,7 @@ public enum OCRStageToast {
     }
 
     static func seconds(_ milliseconds: Int) -> String {
-        String(format: "%.1f초", max(0, Double(milliseconds)) / 1000)
+        String(format: "%.2f초", max(0, Double(milliseconds)) / 1000)
     }
 }
 
