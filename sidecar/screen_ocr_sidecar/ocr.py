@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from collections.abc import Callable, Iterable, Mapping
 from pathlib import Path
 from typing import Any
@@ -68,7 +69,7 @@ def recognized_text(lines: Iterable[Mapping[str, Any]]) -> str:
         return ""
 
     if all(metrics is None for _, metrics in items):
-        return "\n".join(text for text, _ in items)
+        return "\n".join(normalize_korean_spacing(text) for text, _ in items)
 
     return _layout_text(items)
 
@@ -110,7 +111,34 @@ def _layout_text(items: list[tuple[str, dict[str, float] | None]]) -> str:
         row.sort(key=lambda entry: (entry[0], entry[1]))
         output_lines.append(" ".join(text for _, _, text in row))
 
-    return "\n".join(output_lines)
+    return "\n".join(normalize_korean_spacing(line) for line in output_lines)
+
+
+# The Korean recognizer frequently drops spaces next to punctuation (e.g. "보세요.이제",
+# "원하시면(예", a leading "-캡처가"). We can only restore the spaces that Korean typography
+# makes unambiguous, so every rule below is anchored on a Hangul syllable — Latin/digit
+# boundaries are left untouched so code, paths, versions and numbers ("3.9.1", "screen-ocr",
+# "/Users/x", "f(x)", "1,000") are never corrupted.
+_HANGUL = "가-힣"
+_SPACING_RULES: tuple[tuple[re.Pattern[str], str], ...] = (
+    # sentence/clause punctuation immediately followed by Hangul -> add a space after it
+    (re.compile(rf"([.,!?;:])([{_HANGUL}])"), r"\1 \2"),
+    # punctuation immediately followed by an opening bracket -> "복사.(내" => "복사. (내"
+    (re.compile(r"([.,!?;:])([(\[])"), r"\1 \2"),
+    # Hangul or digit immediately followed by an opening bracket -> "면(" / "132(" => "면 (" / "132 ("
+    (re.compile(rf"([{_HANGUL}0-9])([(\[])"), r"\1 \2"),
+    # closing bracket immediately followed by Hangul -> ")이제" => ") 이제"
+    (re.compile(rf"([)\]])([{_HANGUL}])"), r"\1 \2"),
+)
+# A line that starts with a bullet glyph stuck to its text -> "-캡처가" => "- 캡처가"
+_LEADING_BULLET = re.compile(r"^([-*•])(\S)")
+
+
+def normalize_korean_spacing(line: str) -> str:
+    result = _LEADING_BULLET.sub(r"\1 \2", line)
+    for pattern, replacement in _SPACING_RULES:
+        result = pattern.sub(replacement, result)
+    return result
 
 
 def _is_number(value: Any) -> bool:

@@ -6,7 +6,12 @@ from unittest import mock
 
 from PIL import Image, ImageDraw
 
-from screen_ocr_sidecar.ocr import normalize_predict_result, recognize_image, recognized_text
+from screen_ocr_sidecar.ocr import (
+    normalize_korean_spacing,
+    normalize_predict_result,
+    recognize_image,
+    recognized_text,
+)
 from screen_ocr_sidecar.preprocess import preprocess_image_for_ocr
 from screen_ocr_sidecar.worker import handle_request
 
@@ -94,6 +99,35 @@ class OCRContractTests(unittest.TestCase):
         ]
 
         self.assertEqual(recognized_text(lines), "left right")
+
+    def test_normalize_korean_spacing_restores_spaces_next_to_punctuation(self):
+        cases = {
+            "보세요.이제 줄": "보세요. 이제 줄",
+            "합니다.추가로": "합니다. 추가로",
+            "원하시면(예:": "원하시면 (예:",
+            "2540×132(한": "2540×132 (한",
+            "복사.(내": "복사. (내",
+            "확인)이제": "확인) 이제",
+            "-캡처가": "- 캡처가",
+        }
+        for raw, expected in cases.items():
+            self.assertEqual(normalize_korean_spacing(raw), expected, raw)
+
+    def test_normalize_korean_spacing_leaves_code_and_numbers_intact(self):
+        # Latin/digit boundaries must be untouched so code, paths, versions and numbers
+        # are never corrupted by the heuristic.
+        unchanged = [
+            "3.9.1",
+            "screen-ocr",
+            "/Users/chans/workspace",
+            "f(x)",
+            "1,000",
+            "Cmd+Shift+0",
+            "https://example.com/path",
+            "예: 한국어",  # already spaced
+        ]
+        for text in unchanged:
+            self.assertEqual(normalize_korean_spacing(text), text, text)
 
     def test_normalizes_array_like_boxes_to_json_values(self):
         raw = [
