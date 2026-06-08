@@ -9,8 +9,13 @@ from typing import Any
 
 Line = dict[str, Any]
 Document = dict[str, Any]
+# Cap the longest side at 1536 (downscale only — never upscale). The previous 736 cap
+# shrank wide single-line crops (e.g. 2540x132) until their text was ~38px tall and the
+# detector found nothing; 1536 keeps such a strip at ~80px tall so the text stays legible,
+# while still bounding cost for large/full-screen captures (a "min" strategy instead blows
+# up wide strips to multi-megapixel and pushes a normal crop past the request timeout).
 DEFAULT_PREDICT_OPTIONS: Mapping[str, Any] = {
-    "text_det_limit_side_len": 736,
+    "text_det_limit_side_len": 1536,
     "text_det_limit_type": "max",
 }
 
