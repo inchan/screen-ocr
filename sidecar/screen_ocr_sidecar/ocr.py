@@ -32,6 +32,7 @@ def recognize_image(
     image_path: Path | str,
     ocr_factory: Callable[[], Any] | None = None,
     predict_options: Mapping[str, Any] | None = None,
+    min_score: float = 0.0,
 ) -> Document:
     path = Path(image_path)
     factory = ocr_factory or create_default_ocr
@@ -39,6 +40,8 @@ def recognize_image(
     options = dict(DEFAULT_PREDICT_OPTIONS if predict_options is None else predict_options)
     raw = ocr.predict(str(path), **options)
     lines = normalize_predict_result(raw)
+    if min_score > 0.0:
+        lines = [line for line in lines if _coerce_score(line.get("score")) >= min_score]
 
     return {
         "image_path": str(path),

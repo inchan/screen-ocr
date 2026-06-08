@@ -1,5 +1,8 @@
 import CoreGraphics
 import Foundation
+#if canImport(AppKit)
+import AppKit
+#endif
 
 public struct CapturedImage: Equatable, Sendable {
     public let id: String
@@ -81,6 +84,18 @@ public protocol OCRRecognizing {
 public protocol ClipboardWriting: AnyObject {
     func writeText(_ text: String) throws
 }
+
+#if canImport(AppKit)
+public final class PasteboardClipboard: ClipboardWriting {
+    public init() {}
+
+    public func writeText(_ text: String) throws {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
+    }
+}
+#endif
 
 public enum ClipboardCopyToast {
     public static let message = "📋 Copied to clipboard"
@@ -221,6 +236,27 @@ public struct ScreenOCRPipeline<Capture: ImageCapturing, OCR: OCRRecognizing, Cl
         self.clipboard = clipboard
     }
 
+    private func makeTimings(
+        capture: Int,
+        ocr: Int,
+        clipboard: Int,
+        total: Int,
+        diagnostics: [String: Int]
+    ) -> ScreenOCRStageTimings {
+        let imageCapture = diagnostics["image_capture_elapsed_ms"]
+        return ScreenOCRStageTimings(
+            captureElapsedMs: capture,
+            ocrElapsedMs: ocr,
+            clipboardElapsedMs: clipboard,
+            totalElapsedMs: total,
+            selectionElapsedMs: diagnostics["selection_elapsed_ms"],
+            screenCaptureElapsedMs: diagnostics["screen_capture_elapsed_ms"],
+            pngWriteElapsedMs: diagnostics["png_write_elapsed_ms"],
+            imageCaptureElapsedMs: imageCapture,
+            postSelectionToClipboardElapsedMs: imageCapture.map { $0 + ocr + clipboard }
+        )
+    }
+
     public func run() async throws -> ScreenOCRRunReport {
         let totalStarted = Date()
         var captureElapsedMs = 0
@@ -240,11 +276,12 @@ public struct ScreenOCRPipeline<Capture: ImageCapturing, OCR: OCRRecognizing, Cl
                 recognizedText: "",
                 lineCount: 0,
                 errorMessage: error.localizedDescription,
-                timings: ScreenOCRStageTimings(
-                    captureElapsedMs: captureElapsedMs,
-                    ocrElapsedMs: ocrElapsedMs,
-                    clipboardElapsedMs: clipboardElapsedMs,
-                    totalElapsedMs: elapsedMilliseconds(since: totalStarted)
+                timings: makeTimings(
+                    capture: captureElapsedMs,
+                    ocr: ocrElapsedMs,
+                    clipboard: clipboardElapsedMs,
+                    total: elapsedMilliseconds(since: totalStarted),
+                    diagnostics: [:]
                 )
             )
         }
@@ -264,18 +301,12 @@ public struct ScreenOCRPipeline<Capture: ImageCapturing, OCR: OCRRecognizing, Cl
                 recognizedText: "",
                 lineCount: 0,
                 errorMessage: error.localizedDescription,
-                timings: ScreenOCRStageTimings(
-                    captureElapsedMs: captureElapsedMs,
-                    ocrElapsedMs: ocrElapsedMs,
-                    clipboardElapsedMs: clipboardElapsedMs,
-                    totalElapsedMs: elapsedMilliseconds(since: totalStarted),
-                    selectionElapsedMs: image.diagnostics["selection_elapsed_ms"],
-                    screenCaptureElapsedMs: image.diagnostics["screen_capture_elapsed_ms"],
-                    pngWriteElapsedMs: image.diagnostics["png_write_elapsed_ms"],
-                    imageCaptureElapsedMs: image.diagnostics["image_capture_elapsed_ms"],
-                    postSelectionToClipboardElapsedMs: image.diagnostics["image_capture_elapsed_ms"].map {
-                        $0 + ocrElapsedMs
-                    }
+                timings: makeTimings(
+                    capture: captureElapsedMs,
+                    ocr: ocrElapsedMs,
+                    clipboard: clipboardElapsedMs,
+                    total: elapsedMilliseconds(since: totalStarted),
+                    diagnostics: image.diagnostics
                 )
             )
         }
@@ -294,18 +325,12 @@ public struct ScreenOCRPipeline<Capture: ImageCapturing, OCR: OCRRecognizing, Cl
                 recognizedText: text,
                 lineCount: document.lines.count,
                 errorMessage: error.localizedDescription,
-                timings: ScreenOCRStageTimings(
-                    captureElapsedMs: captureElapsedMs,
-                    ocrElapsedMs: ocrElapsedMs,
-                    clipboardElapsedMs: clipboardElapsedMs,
-                    totalElapsedMs: elapsedMilliseconds(since: totalStarted),
-                    selectionElapsedMs: image.diagnostics["selection_elapsed_ms"],
-                    screenCaptureElapsedMs: image.diagnostics["screen_capture_elapsed_ms"],
-                    pngWriteElapsedMs: image.diagnostics["png_write_elapsed_ms"],
-                    imageCaptureElapsedMs: image.diagnostics["image_capture_elapsed_ms"],
-                    postSelectionToClipboardElapsedMs: image.diagnostics["image_capture_elapsed_ms"].map {
-                        $0 + ocrElapsedMs + clipboardElapsedMs
-                    }
+                timings: makeTimings(
+                    capture: captureElapsedMs,
+                    ocr: ocrElapsedMs,
+                    clipboard: clipboardElapsedMs,
+                    total: elapsedMilliseconds(since: totalStarted),
+                    diagnostics: image.diagnostics
                 ),
                 ocrDiagnostics: document.diagnostics,
                 ocrMetadata: document.metadata
@@ -319,18 +344,12 @@ public struct ScreenOCRPipeline<Capture: ImageCapturing, OCR: OCRRecognizing, Cl
             recognizedText: text,
             lineCount: document.lines.count,
             errorMessage: nil,
-            timings: ScreenOCRStageTimings(
-                captureElapsedMs: captureElapsedMs,
-                ocrElapsedMs: ocrElapsedMs,
-                clipboardElapsedMs: clipboardElapsedMs,
-                totalElapsedMs: elapsedMilliseconds(since: totalStarted),
-                selectionElapsedMs: image.diagnostics["selection_elapsed_ms"],
-                screenCaptureElapsedMs: image.diagnostics["screen_capture_elapsed_ms"],
-                pngWriteElapsedMs: image.diagnostics["png_write_elapsed_ms"],
-                imageCaptureElapsedMs: image.diagnostics["image_capture_elapsed_ms"],
-                postSelectionToClipboardElapsedMs: image.diagnostics["image_capture_elapsed_ms"].map {
-                    $0 + ocrElapsedMs + clipboardElapsedMs
-                }
+            timings: makeTimings(
+                capture: captureElapsedMs,
+                ocr: ocrElapsedMs,
+                clipboard: clipboardElapsedMs,
+                total: elapsedMilliseconds(since: totalStarted),
+                diagnostics: image.diagnostics
             ),
             ocrDiagnostics: document.diagnostics,
             ocrMetadata: document.metadata
@@ -338,7 +357,7 @@ public struct ScreenOCRPipeline<Capture: ImageCapturing, OCR: OCRRecognizing, Cl
     }
 }
 
-private func elapsedMilliseconds(since started: Date) -> Int {
+public func elapsedMilliseconds(since started: Date) -> Int {
     max(0, Int((Date().timeIntervalSince(started) * 1000).rounded()))
 }
 
@@ -527,14 +546,33 @@ public struct PersistentOCRWorkerReady: Codable, Equatable, Sendable {
 public actor PersistentPythonSidecarOCR: OCRRecognizing {
     private let pythonExecutablePath: String
     private let sidecarPath: String
+    private let requestTimeoutMs: Int
     private var process: Process?
     private var stdinHandle: FileHandle?
-    private var stdoutHandle: FileHandle?
+    private var reader: WorkerLineReader?
     private var ready: PersistentOCRWorkerReady?
 
     public init(pythonExecutablePath: String, sidecarPath: String) {
+        self.init(
+            pythonExecutablePath: pythonExecutablePath,
+            sidecarPath: sidecarPath,
+            requestTimeoutMs: Self.configuredTimeoutMs()
+        )
+    }
+
+    init(pythonExecutablePath: String, sidecarPath: String, requestTimeoutMs: Int) {
         self.pythonExecutablePath = pythonExecutablePath
         self.sidecarPath = sidecarPath
+        self.requestTimeoutMs = max(1, requestTimeoutMs)
+    }
+
+    private static func configuredTimeoutMs() -> Int {
+        if let raw = ProcessInfo.processInfo.environment["SCREEN_OCR_OCR_TIMEOUT_MS"],
+           let value = Int(raw.trimmingCharacters(in: .whitespaces)),
+           value > 0 {
+            return value
+        }
+        return 15000
     }
 
     deinit {
@@ -542,7 +580,7 @@ public actor PersistentPythonSidecarOCR: OCRRecognizing {
     }
 
     public func prewarm() async throws -> PersistentOCRWorkerReady {
-        try startWorkerIfNeeded()
+        try await startWorkerIfNeeded()
     }
 
     public func workerProcessIdentifier() -> Int32? {
@@ -554,8 +592,8 @@ public actor PersistentPythonSidecarOCR: OCRRecognizing {
             throw PythonSidecarOCRError.missingImagePath(imageID: image.id)
         }
 
-        _ = try startWorkerIfNeeded()
-        guard let stdinHandle, let stdoutHandle else {
+        _ = try await startWorkerIfNeeded()
+        guard let stdinHandle, let reader else {
             throw PersistentPythonSidecarOCRError.workerUnavailable
         }
 
@@ -571,7 +609,7 @@ public actor PersistentPythonSidecarOCR: OCRRecognizing {
 
         let responseData: Data
         do {
-            responseData = try readLineData(from: stdoutHandle)
+            responseData = try await readResponseLine(using: reader, timeoutMs: requestTimeoutMs)
         } catch {
             stopWorker()
             throw error
@@ -598,7 +636,7 @@ public actor PersistentPythonSidecarOCR: OCRRecognizing {
         }
     }
 
-    private func startWorkerIfNeeded() throws -> PersistentOCRWorkerReady {
+    private func startWorkerIfNeeded() async throws -> PersistentOCRWorkerReady {
         if let process, process.isRunning, let ready {
             return ready
         }
@@ -626,13 +664,14 @@ public actor PersistentPythonSidecarOCR: OCRRecognizing {
             throw PersistentPythonSidecarOCRError.startFailed(message: error.localizedDescription)
         }
 
+        let workerReader = WorkerLineReader(handle: stdoutPipe.fileHandleForReading)
         process = workerProcess
         stdinHandle = stdinPipe.fileHandleForWriting
-        stdoutHandle = stdoutPipe.fileHandleForReading
+        reader = workerReader
 
         let readyData: Data
         do {
-            readyData = try readLineData(from: stdoutPipe.fileHandleForReading)
+            readyData = try await readResponseLine(using: workerReader, timeoutMs: requestTimeoutMs)
         } catch {
             stopWorker()
             throw error
@@ -660,7 +699,7 @@ public actor PersistentPythonSidecarOCR: OCRRecognizing {
 
     private func stopWorker() {
         stdinHandle = nil
-        stdoutHandle = nil
+        reader = nil
         ready = nil
         if let process, process.isRunning {
             process.terminate()
@@ -668,17 +707,69 @@ public actor PersistentPythonSidecarOCR: OCRRecognizing {
         process = nil
     }
 
-    private func readLineData(from fileHandle: FileHandle) throws -> Data {
-        var data = Data()
+    /// Reads one newline-delimited response line, racing the blocking read against a hard
+    /// timeout. On timeout the worker process is terminated so the in-flight read unblocks
+    /// via EOF; the next request restarts the worker.
+    private func readResponseLine(using reader: WorkerLineReader, timeoutMs: Int) async throws -> Data {
+        try await withThrowingTaskGroup(of: Data?.self) { group in
+            group.addTask {
+                try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Data?, Error>) in
+                    DispatchQueue.global().async {
+                        do {
+                            continuation.resume(returning: try reader.readLine())
+                        } catch {
+                            continuation.resume(throwing: error)
+                        }
+                    }
+                }
+            }
+            group.addTask {
+                try? await Task.sleep(nanoseconds: UInt64(max(1, timeoutMs)) * 1_000_000)
+                return nil
+            }
+
+            defer { group.cancelAll() }
+
+            while let result = try await group.next() {
+                if let data = result {
+                    return data
+                }
+                // Timeout fired first: terminate the worker so the blocked read sees EOF,
+                // then surface a timeout error to the caller.
+                stopWorker()
+                throw PersistentPythonSidecarOCRError.requestTimedOut(ms: timeoutMs)
+            }
+
+            throw PersistentPythonSidecarOCRError.unexpectedEOF
+        }
+    }
+}
+
+/// Buffered line reader over a worker's stdout. Reads in chunks (vs. one byte at a time) and
+/// keeps any bytes past the newline for the next call. Accessed by one in-flight request at a
+/// time, but handed to a background read task, hence `@unchecked Sendable`.
+final class WorkerLineReader: @unchecked Sendable {
+    private let handle: FileHandle
+    private var buffer = Data()
+
+    init(handle: FileHandle) {
+        self.handle = handle
+    }
+
+    func readLine() throws -> Data {
         while true {
-            let chunk = try fileHandle.read(upToCount: 1)
+            if let newlineIndex = buffer.firstIndex(of: 0x0A) {
+                let line = Data(buffer[buffer.startIndex..<newlineIndex])
+                let remainderStart = buffer.index(after: newlineIndex)
+                buffer = Data(buffer[remainderStart...])
+                return line
+            }
+
+            let chunk = try handle.read(upToCount: 4096)
             guard let chunk, !chunk.isEmpty else {
                 throw PersistentPythonSidecarOCRError.unexpectedEOF
             }
-            if chunk.first == 0x0A {
-                return data
-            }
-            data.append(chunk)
+            buffer.append(chunk)
         }
     }
 }
@@ -719,6 +810,7 @@ public enum PersistentPythonSidecarOCRError: Error, LocalizedError, Sendable {
     case workerReturnedError(message: String)
     case unexpectedEOF
     case invalidJSON(message: String)
+    case requestTimedOut(ms: Int)
 
     public var errorDescription: String? {
         switch self {
@@ -734,6 +826,8 @@ public enum PersistentPythonSidecarOCRError: Error, LocalizedError, Sendable {
             return "Persistent OCR worker closed its output unexpectedly"
         case .invalidJSON(let message):
             return "Persistent OCR worker returned invalid JSON: \(message)"
+        case .requestTimedOut(let ms):
+            return "Persistent OCR worker timed out after \(ms) ms"
         }
     }
 }

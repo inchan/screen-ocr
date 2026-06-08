@@ -30,6 +30,18 @@ Primary user: a macOS user who repeatedly needs to extract Korean and English te
 - Default language profile: Korean plus English.
 - Distribution target: local development `.app` bundle with ad-hoc local signing first, embedded OCR-resource bundle next, fully standalone signed Developer ID distribution later.
 
+## OCR Worker Contract
+
+- The app reuses a long-lived PaddleOCR worker over JSONL (one request, one newline-delimited response). The Swift client reads responses with a buffered line reader.
+- Each OCR request is bounded by a hard timeout. On timeout the worker process is terminated and the next request restarts it, so a hung worker never freezes the menu-bar app.
+- The worker response carries `text` and per-line `{text, score}`; it omits detection `box` polygons because the app does not consume them. The one-shot `screen_ocr_sidecar.ocr` CLI still emits `box`.
+
+### Configuration knobs (environment variables)
+
+- `SCREEN_OCR_OCR_TIMEOUT_MS`: hard per-request OCR timeout in milliseconds. Default `15000`. Unset or non-positive falls back to the default.
+- `SCREEN_OCR_MIN_LINE_SCORE`: opt-in minimum recognition confidence; lines below it are dropped from text and line count. Default unset → no filtering (current behavior). Invalid values are ignored.
+- `SCREEN_OCR_PROJECT_ROOT`, `SCREEN_OCR_ARTIFACT_ROOT`, `SCREEN_OCR_FORCE_LEGACY_CAPTURE`: existing path/capture overrides (unchanged).
+
 ## Clipboard Contract
 
 On OCR success, the clipboard contains recognized plain text.

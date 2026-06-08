@@ -1,6 +1,23 @@
 # Validation Report
 
-Last updated: 2026-06-05.
+Last updated: 2026-06-08.
+
+## 2026-06-08 Cycle: Worker round-trip hardening (timeout, slim payload, opt-in filter)
+
+Scope: D-0017 — buffered worker reads + hard request timeout (Swift), slim worker payload and opt-in low-score line filter (Python).
+
+Verified in this environment (Linux web container; `swift` is not installed here):
+- Python sidecar tests: `scripts/run_python_tests.sh` → 18 tests OK (5 new: min-score filter on/default, slim `{text, score}` worker payload, env-driven filter, invalid-env fallback). Baseline before this cycle was 13 tests.
+- `python3 -m py_compile` of `worker.py` and `ocr.py`: OK.
+- Defaults preserved: with `SCREEN_OCR_MIN_LINE_SCORE` unset, recognized text and line count are unchanged (covered by `test_recognize_image_keeps_all_lines_when_min_score_is_default` and the unchanged existing contract tests).
+- Test-runner portability fix: `scripts/run_python_tests.sh` now falls back to `python3` when neither `.venv-ocr` nor `python3.12` is present, so sidecar tests run in the web container.
+
+Not verified in this environment (requires a macOS host with the Swift toolchain):
+- `swift test` for `ScreenOCRCoreTests`, including the new `testPersistentPythonSidecarOCRTimesOutWhenWorkerHangs` (R1) and the existing persistent-worker tests that also cover the slim `{text, score}` payload shape.
+- `swift build` for `ScreenOCRApp`, `ScreenOCRSmoke`, `ScreenOCRFixtureWindow`.
+- The Swift-dependent portions of `scripts/agent_gate.sh` (swift test/build, `.app` bundle build/sign) and `scripts/run_ocr_fixture_benchmark.py` against the real PaddleOCR runtime.
+
+Next verification step (macOS host): run `swift test`, `swift build --product ScreenOCRApp`, `scripts/agent_gate.sh`, and a 7-repeat `scripts/run_ocr_fixture_benchmark.py` to confirm 20/20 and that warm median stays at or below the recorded 281.285 ms.
 
 ## Current Claim
 

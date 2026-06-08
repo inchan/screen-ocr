@@ -179,3 +179,18 @@ Reason: Web research and local timing show large image area directly increases t
 Constraint: Preprocessing must preserve the original capture for debugging, record preprocessing time and original/preprocessed dimensions, and fall back to the original image when trim confidence or area reduction is insufficient.
 
 Rejected: Replacing PaddleOCR before measuring preprocessing. The current engine is fast enough on small crops after prewarm; the large-region problem first needs input-size evidence.
+
+## D-0017: Harden the persistent worker round-trip (timeout, slim payload, opt-in line filter)
+
+Status: accepted
+
+Decision: Make three changes to the persistent OCR worker round-trip that are behavior-preserving by default:
+1. The Swift client reads worker responses through a buffered line reader and enforces a hard per-request timeout (`SCREEN_OCR_OCR_TIMEOUT_MS`, default 15000 ms). On timeout the worker process is terminated so the in-flight read unblocks via EOF, and the next request restarts it.
+2. The worker drops `box` polygon arrays from the per-line response payload, because the Swift client only consumes `text` and `score`. The one-shot CLI and the fixture benchmark still call `recognize_image` directly and keep `box`.
+3. The worker honors an opt-in low-confidence line filter (`SCREEN_OCR_MIN_LINE_SCORE`, default unset → no filtering) via a new `min_score` parameter on `recognize_image`.
+
+Reason: This resolves the "hard request timeout remains a separate reliability gap" called out in D-0015 (a hung worker could otherwise freeze the menu bar app indefinitely). The buffered reader replaces a one-byte-at-a-time read loop, and the slim payload reduces the bytes transferred and decoded per request. The line filter is opt-in so default OCR quality and the 20/20 fixture benchmark are unchanged.
+
+Constraint: Defaults must preserve current behavior — `min_score=0.0` filters nothing, the timeout is generous, and the slim payload still decodes into the existing `OCRDocument` (which already ignored `box`). The blocking worker read runs on a background dispatch queue, not the actor's executor or a cooperative thread.
+
+Rejected: Filtering low-score lines by default. It would change recognized text and the fixture benchmark without separate quality evidence, so it stays behind an explicit env opt-in.

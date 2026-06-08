@@ -1,6 +1,8 @@
+import os
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest import mock
 
 from PIL import Image, ImageDraw
 
@@ -103,6 +105,55 @@ class OCRContractTests(unittest.TestCase):
         self.assertEqual(response["metadata"]["preprocess_status"], "skipped_small")
         self.assertGreaterEqual(response["request_elapsed_ms"], 0)
 
+    def test_recognize_image_filters_lines_below_min_score(self):
+        image_path = Path("fixtures/ocr/mixed-ko-en-simple.png")
+
+        document = recognize_image(image_path, ocr_factory=lambda: LowScoreOCR(), min_score=0.5)
+
+        self.assertEqual(document["line_count"], 1)
+        self.assertEqual(document["text"], "OCR 테스트")
+
+    def test_recognize_image_keeps_all_lines_when_min_score_is_default(self):
+        image_path = Path("fixtures/ocr/mixed-ko-en-simple.png")
+
+        document = recognize_image(image_path, ocr_factory=lambda: LowScoreOCR())
+
+        self.assertEqual(document["line_count"], 2)
+        self.assertEqual(document["text"], "OCR 테스트\nnoise")
+
+    def test_worker_response_lines_omit_box_payload(self):
+        response = handle_request(
+            {"id": "req-slim", "image_path": "fixtures/ocr/mixed-ko-en-simple.png"},
+            FakeOCR(),
+        )
+
+        self.assertTrue(response["ok"])
+        self.assertEqual(response["line_count"], 2)
+        self.assertTrue(response["lines"])
+        for line in response["lines"]:
+            self.assertEqual(set(line.keys()), {"text", "score"})
+
+    def test_worker_honors_min_line_score_env(self):
+        with mock.patch.dict(os.environ, {"SCREEN_OCR_MIN_LINE_SCORE": "0.5"}):
+            response = handle_request(
+                {"id": "req-filter", "image_path": "fixtures/ocr/mixed-ko-en-simple.png"},
+                LowScoreOCR(),
+            )
+
+        self.assertTrue(response["ok"])
+        self.assertEqual(response["line_count"], 1)
+        self.assertEqual(response["text"], "OCR 테스트")
+
+    def test_worker_ignores_invalid_min_line_score_env(self):
+        with mock.patch.dict(os.environ, {"SCREEN_OCR_MIN_LINE_SCORE": "not-a-number"}):
+            response = handle_request(
+                {"id": "req-bad-env", "image_path": "fixtures/ocr/mixed-ko-en-simple.png"},
+                LowScoreOCR(),
+            )
+
+        self.assertTrue(response["ok"])
+        self.assertEqual(response["line_count"], 2)
+
     def test_worker_request_reports_missing_image_path(self):
         response = handle_request({"id": "req-2"}, FakeOCR())
 
@@ -167,6 +218,24 @@ class FakeOCR:
             {
                 "rec_texts": ["OCR 테스트", "Hello 123"],
                 "rec_scores": [0.97, 0.95],
+                "rec_boxes": [
+                    [0, 0, 90, 20],
+                    [0, 30, 100, 50],
+                ],
+            }
+        ]
+
+
+class LowScoreOCR:
+    def __init__(self):
+        self.predict_call_count = 0
+
+    def predict(self, image_path, **kwargs):
+        self.predict_call_count += 1
+        return [
+            {
+                "rec_texts": ["OCR 테스트", "noise"],
+                "rec_scores": [0.97, 0.40],
                 "rec_boxes": [
                     [0, 0, 90, 20],
                     [0, 30, 100, 50],

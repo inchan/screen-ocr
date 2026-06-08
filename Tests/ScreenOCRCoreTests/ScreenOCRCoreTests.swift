@@ -243,6 +243,38 @@ final class ScreenOCRCoreTests: XCTestCase {
         }
     }
 
+    func testPersistentPythonSidecarOCRTimesOutWhenWorkerHangs() async throws {
+        let executable = try makeExecutableScript(
+            name: "fake-worker-hang",
+            body: """
+            #!/bin/sh
+            printf '%s\\n' '{"event":"ready","ok":true,"init_elapsed_ms":1}'
+            while IFS= read -r line; do
+              sleep 30
+            done
+            """
+        )
+        let ocr = PersistentPythonSidecarOCR(
+            pythonExecutablePath: executable.path,
+            sidecarPath: "/tmp/sidecar",
+            requestTimeoutMs: 300
+        )
+        _ = try await ocr.prewarm()
+        let image = CapturedImage(
+            id: "fixture://persistent-bridge-hang",
+            width: 320,
+            height: 120,
+            filePath: "/tmp/input.png"
+        )
+
+        do {
+            _ = try await ocr.recognizeText(in: image)
+            XCTFail("Expected persistent worker timeout")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("timed out"))
+        }
+    }
+
     func testDebugArtifactWriterSavesImageTextAndManifestAsPair() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("screen-ocr-debug-tests-\(UUID().uuidString)", isDirectory: true)

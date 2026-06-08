@@ -193,3 +193,13 @@ Evidence: The first large-empty auto-trim used 32 px padding and reduced the ima
 Adjustment: Default auto-trim padding is 64 px, and future preprocessing changes must verify OCR text plus latency, not only crop size.
 
 Status: adopted
+
+### 2026-06-08 Swift Toolchain Absent In Web Container
+
+Observation: The Claude Code web execution container is Linux without `swift`, so `swift test`, `swift build`, and the Swift-dependent half of `scripts/agent_gate.sh` cannot run there. Swift changes made in a web session are unverified until a macOS host runs them.
+
+Evidence: `command -v swift` returned nothing in the container for the D-0017 cycle; only `python3`/`python3.12`/`ruby` were available. Python sidecar tests passed (18/18), but the Swift timeout/buffered-reader changes could only be syntax-reviewed, not compiled. Separately, `scripts/run_python_tests.sh` defaulted to `python3.12`, which exists in this container but lacked Pillow, while the bare fallback needed to be `python3`.
+
+Adjustment: (1) `scripts/run_python_tests.sh` now falls back to `python3` when `.venv-ocr` and `python3.12` are absent, so sidecar tests run in the web container. (2) Validation reports written from a web session must explicitly separate "verified here" from "needs a macOS host," and must not claim Swift gates pass without a macOS run.
+
+Status: adopted

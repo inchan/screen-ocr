@@ -198,14 +198,6 @@ private final class SmokeFixtureView: NSView {
     }
 }
 
-private final class PasteboardClipboard: ClipboardWriting {
-    func writeText(_ text: String) throws {
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        pasteboard.setString(text, forType: .string)
-    }
-}
-
 private enum SmokeError: Error, LocalizedError {
     case emptyImage
     case cannotCreateImageDestination

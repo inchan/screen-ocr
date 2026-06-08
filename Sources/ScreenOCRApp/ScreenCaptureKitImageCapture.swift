@@ -12,17 +12,17 @@ struct ScreenCaptureKitImageCapture: ImageCapturing {
     func captureRegion() async throws -> CapturedImage {
         let selectionStarted = Date()
         let selection = try await selectRegion()
-        let selectionElapsedMs = captureElapsedMilliseconds(since: selectionStarted)
+        let selectionElapsedMs = elapsedMilliseconds(since: selectionStarted)
 
         let imageCaptureStarted = Date()
         let screenCaptureStarted = Date()
         let image = try await captureImage(for: selection)
-        let screenCaptureElapsedMs = captureElapsedMilliseconds(since: screenCaptureStarted)
+        let screenCaptureElapsedMs = elapsedMilliseconds(since: screenCaptureStarted)
 
         let pngWriteStarted = Date()
         let fileURL = try writePNG(image)
-        let pngWriteElapsedMs = captureElapsedMilliseconds(since: pngWriteStarted)
-        let imageCaptureElapsedMs = captureElapsedMilliseconds(since: imageCaptureStarted)
+        let pngWriteElapsedMs = elapsedMilliseconds(since: pngWriteStarted)
+        let imageCaptureElapsedMs = elapsedMilliseconds(since: imageCaptureStarted)
 
         return CapturedImage(
             id: "screen://\(selection.displayID)/\(Int(Date().timeIntervalSince1970 * 1000))",
@@ -147,10 +147,6 @@ struct ScreenCaptureKitImageCapture: ImageCapturing {
 
         return fileURL
     }
-}
-
-private func captureElapsedMilliseconds(since started: Date) -> Int {
-    max(0, Int((Date().timeIntervalSince(started) * 1000).rounded()))
 }
 
 enum ScreenCaptureKitCaptureError: Error, LocalizedError {

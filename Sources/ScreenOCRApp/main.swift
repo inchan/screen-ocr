@@ -332,17 +332,8 @@ final class ScreenOCRApp: NSObject, NSApplicationDelegate {
     }
 
     private func projectRootURL() -> URL {
-        if let path = ProcessInfo.processInfo.environment["SCREEN_OCR_PROJECT_ROOT"],
-           !path.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return URL(fileURLWithPath: path, isDirectory: true)
-        }
-
-        if let resourceURL = Bundle.main.resourceURL?.appendingPathComponent("project-root.txt"),
-           let contents = try? String(contentsOf: resourceURL, encoding: .utf8) {
-            let path = contents.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !path.isEmpty {
-                return URL(fileURLWithPath: path, isDirectory: true)
-            }
+        if let configured = configuredProjectRootURL() {
+            return configured
         }
 
         let currentDirectory = URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
@@ -372,6 +363,10 @@ final class ScreenOCRApp: NSObject, NSApplicationDelegate {
     }
 
     private func explicitProjectRootURL() -> URL? {
+        configuredProjectRootURL()
+    }
+
+    private func configuredProjectRootURL() -> URL? {
         if let path = ProcessInfo.processInfo.environment["SCREEN_OCR_PROJECT_ROOT"],
            !path.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return URL(fileURLWithPath: path, isDirectory: true)
@@ -446,8 +441,12 @@ final class ScreenOCRApp: NSObject, NSApplicationDelegate {
     }
 
     private func writeAppStatus(status: String, details: [String: String]) {
+        let url = runtimePaths().artifactsRoot.appendingPathComponent("app/latest-status.json")
+        writeStatusJSON(to: url, status: status, details: details)
+    }
+
+    private func writeStatusJSON(to url: URL, status: String, details: [String: String]) {
         do {
-            let url = runtimePaths().artifactsRoot.appendingPathComponent("app/latest-status.json")
             try FileManager.default.createDirectory(
                 at: url.deletingLastPathComponent(),
                 withIntermediateDirectories: true
@@ -476,7 +475,7 @@ final class ScreenOCRApp: NSObject, NSApplicationDelegate {
             let started = Date()
             do {
                 let ready = try await ocr.prewarm()
-                let readyElapsedMs = appElapsedMilliseconds(since: started)
+                let readyElapsedMs = elapsedMilliseconds(since: started)
                 let processID = await ocr.workerProcessIdentifier()
                 var details: [String: String] = [
                     "ready_elapsed_ms": "\(readyElapsedMs)",
@@ -520,24 +519,8 @@ final class ScreenOCRApp: NSObject, NSApplicationDelegate {
         details: [String: String],
         paths: AppRuntimePaths
     ) {
-        do {
-            let url = paths.artifactsRoot.appendingPathComponent("app/latest-worker-status.json")
-            try FileManager.default.createDirectory(
-                at: url.deletingLastPathComponent(),
-                withIntermediateDirectories: true
-            )
-            var payload: [String: Any] = [
-                "created_at": ISO8601DateFormatter().string(from: Date()),
-                "status": status
-            ]
-            for (key, value) in details {
-                payload[key] = value
-            }
-            let data = try JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])
-            try data.write(to: url)
-        } catch {
-            // Diagnostics must never break the user-facing OCR flow.
-        }
+        let url = paths.artifactsRoot.appendingPathComponent("app/latest-worker-status.json")
+        writeStatusJSON(to: url, status: status, details: details)
     }
 
     private func residentMemoryMegabytes(processID: Int32) -> Double? {
@@ -597,14 +580,6 @@ private struct StaticImageCapture: ImageCapturing {
 
     func captureRegion() async throws -> CapturedImage {
         image
-    }
-}
-
-private final class PasteboardClipboard: ClipboardWriting {
-    func writeText(_ text: String) throws {
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        pasteboard.setString(text, forType: .string)
     }
 }
 
@@ -706,6 +681,3 @@ private extension ScreenOCRStageTimings {
     }
 }
 
-private func appElapsedMilliseconds(since started: Date) -> Int {
-    max(0, Int((Date().timeIntervalSince(started) * 1000).rounded()))
-}

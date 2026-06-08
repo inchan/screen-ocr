@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import json
+import os
 import sys
 import time
 from collections.abc import Mapping
@@ -15,6 +16,17 @@ from screen_ocr_sidecar.preprocess import preprocess_image_for_ocr, skip_preproc
 def load_ocr() -> Any:
     with contextlib.redirect_stdout(sys.stderr):
         return create_default_ocr()
+
+
+def _min_line_score() -> float:
+    """Opt-in low-confidence line filter; unset/invalid keeps current behavior (no filter)."""
+    raw = os.environ.get("SCREEN_OCR_MIN_LINE_SCORE")
+    if not raw:
+        return 0.0
+    try:
+        return float(raw)
+    except ValueError:
+        return 0.0
 
 
 def handle_request(
@@ -36,8 +48,17 @@ def handle_request(
             preprocess_result = skip_preprocessing(str(image_path))
         else:
             preprocess_result = preprocess_image_for_ocr(str(image_path))
-        document = recognize_image(preprocess_result.ocr_image_path, ocr_factory=lambda: ocr)
+        document = recognize_image(
+            preprocess_result.ocr_image_path,
+            ocr_factory=lambda: ocr,
+            min_score=_min_line_score(),
+        )
 
+    # The Swift client only consumes text + score; drop box polygons to slim the wire payload.
+    document["lines"] = [
+        {"text": line["text"], "score": line["score"]}
+        for line in document.get("lines", [])
+    ]
     document.update(
         {
             "id": request_id,
