@@ -22,8 +22,10 @@ final class ScreenOCRApp: NSObject, NSApplicationDelegate {
     private var isDrainingQueue = false
     private var batchProgress = OCRBatchProgress()
     private var progressTimerTask: Task<Void, Never>?
-    private var activeJobStartedAt: Date?
     private var progressToastShown = false
+    // Step-by-step progress state for the multi-line toast.
+    private var stageProgress = OCRStageProgress()
+    private var activeStageStartedAt: Date?
 
     private struct OCRJob {
         let image: CapturedImage
@@ -213,19 +215,41 @@ final class ScreenOCRApp: NSObject, NSApplicationDelegate {
         }
         isDrainingQueue = false
         stopProgressTimer()
-        activeJobStartedAt = nil
+        activeStageStartedAt = nil
     }
 
     private func processOCRJob(_ job: OCRJob) async {
         let started = Date()
-        activeJobStartedAt = started
+
+        // Seed the stage timeline: screen capture and PNG write already finished during the
+        // (immediate) capture step, so show their measured durations; the worker will stream
+        // preprocess/recognize, and the clipboard time comes from the final report.
+        stageProgress = OCRStageProgress(
+            completedMs: [
+                .screenCapture: job.image.diagnostics["screen_capture_elapsed_ms"] ?? 0,
+                .pngWrite: job.image.diagnostics["png_write_elapsed_ms"] ?? 0
+            ],
+            active: .preprocess,
+            batchIndex: batchProgress.currentIndex,
+            batchTotal: batchProgress.total
+        )
+        activeStageStartedAt = started
         startProgressTimer()
+
+        let ocr = ocrRecognizer(paths: job.paths)
+        await ocr.setStageHandler { [weak self] stage in
+            Task { @MainActor in
+                self?.handleWorkerStage(stage)
+            }
+        }
 
         let pipeline = ScreenOCRPipeline(
             capture: StaticImageCapture(image: job.image),
-            ocr: ocrRecognizer(paths: job.paths),
+            ocr: ocr,
             clipboard: PasteboardClipboard()
         )
+
+        defer { Task { await ocr.setStageHandler(nil) } }
 
         do {
             let report = try await pipeline.run()
@@ -244,6 +268,17 @@ final class ScreenOCRApp: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// Advances the stage timeline as the worker streams progress events: freeze the elapsed
+    /// time of the stage that just ended and start the clock on the new one.
+    private func handleWorkerStage(_ stage: OCRStage) {
+        let now = Date()
+        if stage == .recognize, let started = activeStageStartedAt, stageProgress.active == .preprocess {
+            stageProgress.completedMs[.preprocess] = Int((now.timeIntervalSince(started) * 1000).rounded())
+        }
+        stageProgress.active = stage
+        activeStageStartedAt = now
+    }
+
     private func finishOCRJob(
         report: ScreenOCRRunReport,
         job: OCRJob,
@@ -253,14 +288,12 @@ final class ScreenOCRApp: NSObject, NSApplicationDelegate {
         switch report.status {
         case .copiedText:
             // "완료" is only declared once the clipboard write actually succeeded (.copiedText).
+            // Freeze every stage with the authoritative durations from the report and show the
+            // completed step-by-step breakdown.
+            stageProgress = finalStageProgress(from: report)
+            activeStageStartedAt = nil
             updateStatus("Copied \(report.lineCount) OCR lines")
-            showTerminalToast(
-                OCRProgressToast.copied(
-                    index: batchProgress.currentIndex,
-                    total: batchProgress.total,
-                    elapsed: elapsed
-                )
-            )
+            showStageToast(sticky: false)
         case .failed(let stage):
             updateStatus("OCR \(stage.diagnosticValue) failed")
             showTerminalToast(OCRProgressToast.failed(reason: stage.diagnosticValue))
@@ -308,14 +341,13 @@ final class ScreenOCRApp: NSObject, NSApplicationDelegate {
 
     private func startProgressTimer() {
         progressTimerTask?.cancel()
-        let anchor = toastAnchor()
-        renderProgressToast(anchor: anchor)
+        showStageToast(sticky: true)
         progressTimerTask = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 100_000_000)
                 if Task.isCancelled { break }
                 await MainActor.run {
-                    self?.renderProgressToast(anchor: anchor)
+                    self?.showStageToast(sticky: true)
                 }
             }
         }
@@ -326,22 +358,50 @@ final class ScreenOCRApp: NSObject, NSApplicationDelegate {
         progressTimerTask = nil
     }
 
-    private func renderProgressToast(anchor: (anchorFrame: CGRect?, visibleFrame: CGRect?)) {
-        let elapsed = activeJobStartedAt.map { Date().timeIntervalSince($0) } ?? 0
-        let message = OCRProgressToast.processing(
-            index: batchProgress.currentIndex,
-            total: batchProgress.total,
-            elapsed: elapsed
+    private func finalStageProgress(from report: ScreenOCRRunReport) -> OCRStageProgress {
+        let timings = report.timings
+        let preprocessMs = report.ocrDiagnostics["preprocess_elapsed_ms"]
+            ?? stageProgress.completedMs[.preprocess] ?? 0
+        let ocrTotalMs = timings?.ocrElapsedMs ?? 0
+        return OCRStageProgress(
+            completedMs: [
+                .screenCapture: timings?.screenCaptureElapsedMs ?? stageProgress.completedMs[.screenCapture] ?? 0,
+                .pngWrite: timings?.pngWriteElapsedMs ?? stageProgress.completedMs[.pngWrite] ?? 0,
+                .preprocess: preprocessMs,
+                .recognize: max(0, ocrTotalMs - preprocessMs),
+                .clipboard: timings?.clipboardElapsedMs ?? 0
+            ],
+            active: nil,
+            batchIndex: batchProgress.currentIndex,
+            batchTotal: batchProgress.total
         )
-        if progressToastShown {
-            copyToastPresenter.update(message: message)
+    }
+
+    /// Renders the multi-line step-by-step toast. `sticky` keeps it on screen (live updates);
+    /// otherwise it auto-dismisses (terminal/completed state).
+    private func showStageToast(sticky: Bool) {
+        let activeElapsedMs = activeStageStartedAt
+            .map { Int((Date().timeIntervalSince($0) * 1000).rounded()) } ?? 0
+        let message = OCRStageToast.render(progress: stageProgress, activeElapsedMs: activeElapsedMs)
+        let anchor = toastAnchor()
+        if sticky {
+            if progressToastShown {
+                copyToastPresenter.update(message: message)
+            } else {
+                copyToastPresenter.showSticky(
+                    message: message,
+                    anchorFrame: anchor.anchorFrame,
+                    visibleFrame: anchor.visibleFrame
+                )
+                progressToastShown = true
+            }
         } else {
-            copyToastPresenter.showSticky(
+            copyToastPresenter.show(
                 message: message,
                 anchorFrame: anchor.anchorFrame,
                 visibleFrame: anchor.visibleFrame
             )
-            progressToastShown = true
+            progressToastShown = false
         }
     }
 
@@ -687,7 +747,15 @@ private struct StaticImageCapture: ImageCapturing {
 private final class CopyToastPresenter {
     private var window: NSWindow?
     private var closeTask: Task<Void, Never>?
-    private let preferredSize = CGSize(width: 240, height: 44)
+    private let toastWidth: CGFloat = 232
+
+    /// Sizes the toast to its content: single-line stays compact, the multi-line stage list
+    /// grows by line count.
+    private func toastSize(for message: String) -> CGSize {
+        let lineCount = max(1, message.split(separator: "\n", omittingEmptySubsequences: false).count)
+        let height: CGFloat = lineCount == 1 ? 44 : CGFloat(lineCount) * 19 + 20
+        return CGSize(width: toastWidth, height: height)
+    }
 
     /// Shows a toast that dismisses itself after a short delay. Used for terminal states
     /// (copy complete / failure).
@@ -707,9 +775,18 @@ private final class CopyToastPresenter {
         present(message: message, anchorFrame: anchorFrame, visibleFrame: visibleFrame)
     }
 
-    /// Replaces the text of the currently visible toast in place (cheap; no reframing).
+    /// Replaces the text of the currently visible toast in place, growing/shrinking the window
+    /// if the line count changed (e.g. when a stage completes).
     func update(message: String) {
         guard let window else { return }
+        let size = toastSize(for: message)
+        if abs(window.frame.height - size.height) > 0.5 {
+            var frame = window.frame
+            // Keep the top edge anchored so the toast grows downward.
+            frame.origin.y += frame.height - size.height
+            frame.size = size
+            window.setFrame(frame, display: true)
+        }
         window.contentView = ToastView(message: message)
         window.orderFrontRegardless()
     }
@@ -722,6 +799,7 @@ private final class CopyToastPresenter {
     private func present(message: String, anchorFrame: CGRect?, visibleFrame: CGRect?) {
         closeTask?.cancel()
 
+        let preferredSize = toastSize(for: message)
         let visibleFrame = visibleFrame ?? NSScreen.main?.visibleFrame ?? CGRect(x: 0, y: 0, width: 320, height: 240)
         let frame: CGRect
         if let anchorFrame {
@@ -749,7 +827,7 @@ private final class CopyToastPresenter {
 
     private func makeWindow() -> NSWindow {
         let window = NSPanel(
-            contentRect: CGRect(origin: .zero, size: preferredSize),
+            contentRect: CGRect(origin: .zero, size: CGSize(width: toastWidth, height: 44)),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
@@ -766,10 +844,11 @@ private final class CopyToastPresenter {
 
 private final class ToastView: NSView {
     private let message: String
+    private var isMultiline: Bool { message.contains("\n") }
 
     init(message: String) {
         self.message = message
-        super.init(frame: CGRect(origin: .zero, size: CGSize(width: 240, height: 44)))
+        super.init(frame: CGRect(origin: .zero, size: CGSize(width: 232, height: 44)))
         wantsLayer = true
         layer?.cornerRadius = 10
         layer?.backgroundColor = NSColor.windowBackgroundColor.withAlphaComponent(0.96).cgColor
@@ -785,15 +864,30 @@ private final class ToastView: NSView {
         super.draw(dirtyRect)
 
         let paragraphStyle = NSMutableParagraphStyle()
-        paragraphStyle.alignment = .center
         paragraphStyle.lineBreakMode = .byTruncatingTail
 
-        let attributes: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: 14, weight: .semibold),
-            .foregroundColor: NSColor.labelColor,
-            .paragraphStyle: paragraphStyle
-        ]
-        let rect = bounds.insetBy(dx: 12, dy: 13)
+        let attributes: [NSAttributedString.Key: Any]
+        let rect: CGRect
+        if isMultiline {
+            // Left-aligned with monospaced digits so the elapsed-time column lines up; extra
+            // line spacing for legibility.
+            paragraphStyle.alignment = .left
+            paragraphStyle.lineSpacing = 3
+            attributes = [
+                .font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium),
+                .foregroundColor: NSColor.labelColor,
+                .paragraphStyle: paragraphStyle
+            ]
+            rect = bounds.insetBy(dx: 12, dy: 10)
+        } else {
+            paragraphStyle.alignment = .center
+            attributes = [
+                .font: NSFont.systemFont(ofSize: 14, weight: .semibold),
+                .foregroundColor: NSColor.labelColor,
+                .paragraphStyle: paragraphStyle
+            ]
+            rect = bounds.insetBy(dx: 12, dy: 13)
+        }
         message.draw(in: rect, withAttributes: attributes)
     }
 }

@@ -6,7 +6,7 @@ import json
 import os
 import sys
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any, TextIO
 
 from screen_ocr_sidecar.ocr import create_default_ocr, recognize_image
@@ -32,6 +32,7 @@ def _min_line_score() -> float:
 def handle_request(
     payload: Mapping[str, Any],
     ocr: Any,
+    on_progress: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
     request_id = str(payload.get("id", ""))
     image_path = payload.get("image_path")
@@ -42,12 +43,18 @@ def handle_request(
             "error": "Worker request is missing image_path",
         }
 
+    def emit(stage: str) -> None:
+        if on_progress is not None:
+            on_progress(stage)
+
     started = time.perf_counter()
     with contextlib.redirect_stdout(sys.stderr):
+        emit("preprocess")
         if payload.get("preprocess", True) is False:
             preprocess_result = skip_preprocessing(str(image_path))
         else:
             preprocess_result = preprocess_image_for_ocr(str(image_path))
+        emit("recognize")
         document = recognize_image(
             preprocess_result.ocr_image_path,
             ocr_factory=lambda: ocr,
@@ -86,7 +93,18 @@ def serve(
             payload = json.loads(line)
             if isinstance(payload, Mapping):
                 request_id = str(payload.get("id", ""))
-                response = handle_request(payload, ocr)
+
+                def emit_progress(stage: str, _id: str = request_id) -> None:
+                    print(
+                        json.dumps(
+                            {"id": _id, "event": "progress", "stage": stage},
+                            ensure_ascii=False,
+                        ),
+                        file=stdout,
+                        flush=True,
+                    )
+
+                response = handle_request(payload, ocr, on_progress=emit_progress)
             else:
                 response = {
                     "id": request_id,

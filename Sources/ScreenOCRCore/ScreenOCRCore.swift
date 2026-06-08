@@ -158,6 +158,90 @@ public enum OCRProgressToast {
     }
 }
 
+/// The pipeline stages shown, in order, in the step-by-step progress toast. Each maps to a
+/// measured segment of a single OCR run.
+public enum OCRStage: String, CaseIterable, Sendable {
+    case screenCapture
+    case pngWrite
+    case preprocess
+    case recognize
+    case clipboard
+
+    public var label: String {
+        switch self {
+        case .screenCapture: return "화면 캡처"
+        case .pngWrite: return "PNG 저장"
+        case .preprocess: return "전처리"
+        case .recognize: return "검출+인식"
+        case .clipboard: return "클립보드 복사"
+        }
+    }
+
+    /// Maps a worker progress event name to its stage (worker streams these two).
+    public static func fromWorkerEvent(_ name: String) -> OCRStage? {
+        switch name {
+        case "preprocess": return .preprocess
+        case "recognize": return .recognize
+        default: return nil
+        }
+    }
+}
+
+/// Pure state for the step-by-step progress toast: which stages have finished (with their
+/// frozen duration), which one is currently running, and the batch position. The live elapsed
+/// time of the active stage is supplied at render time so this stays free of any clock.
+public struct OCRStageProgress: Equatable, Sendable {
+    public var completedMs: [OCRStage: Int]
+    public var active: OCRStage?
+    public var batchIndex: Int
+    public var batchTotal: Int
+
+    public init(
+        completedMs: [OCRStage: Int] = [:],
+        active: OCRStage? = nil,
+        batchIndex: Int = 1,
+        batchTotal: Int = 1
+    ) {
+        self.completedMs = completedMs
+        self.active = active
+        self.batchIndex = batchIndex
+        self.batchTotal = batchTotal
+    }
+
+    public var isComplete: Bool {
+        active == nil && completedMs.count == OCRStage.allCases.count
+    }
+}
+
+public enum OCRStageToast {
+    /// Renders the multi-line toast: a total line plus one line per stage. Completed stages show
+    /// their frozen duration, the active stage shows the live elapsed time, pending stages show
+    /// a dash. The total is the sum of all stage times (frozen + the active stage's live time).
+    public static func render(progress: OCRStageProgress, activeElapsedMs: Int) -> String {
+        let activeMs = progress.active == nil ? 0 : max(0, activeElapsedMs)
+        let totalMs = progress.completedMs.values.reduce(0, +) + activeMs
+
+        let batch = progress.batchTotal > 1 ? " \(progress.batchIndex)/\(progress.batchTotal)" : ""
+        let header = progress.isComplete ? "✅" : "⏳"
+        var lines = ["\(header) 전체\(batch) · \(seconds(totalMs))"]
+
+        for stage in OCRStage.allCases {
+            if let ms = progress.completedMs[stage] {
+                lines.append("✓ \(stage.label) · \(seconds(ms))")
+            } else if progress.active == stage {
+                lines.append("▶ \(stage.label) · \(seconds(activeMs))")
+            } else {
+                lines.append("· \(stage.label) · —")
+            }
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    static func seconds(_ milliseconds: Int) -> String {
+        String(format: "%.1f초", max(0, Double(milliseconds)) / 1000)
+    }
+}
+
 public enum ClipboardCopyToast {
     public static let message = "📋 Copied to clipboard"
 
@@ -612,6 +696,13 @@ public actor PersistentPythonSidecarOCR: OCRRecognizing {
     private var stdinHandle: FileHandle?
     private var reader: WorkerLineReader?
     private var ready: PersistentOCRWorkerReady?
+    private var stageHandler: (@Sendable (OCRStage) -> Void)?
+
+    /// Installs a callback invoked as the worker streams per-stage progress events for the next
+    /// request (one in-flight request at a time, so a single slot is enough).
+    public func setStageHandler(_ handler: (@Sendable (OCRStage) -> Void)?) {
+        stageHandler = handler
+    }
 
     public init(pythonExecutablePath: String, sidecarPath: String) {
         self.init(
@@ -679,9 +770,11 @@ public actor PersistentPythonSidecarOCR: OCRRecognizing {
             throw PersistentPythonSidecarOCRError.writeFailed(message: error.localizedDescription)
         }
 
+        // The worker streams progress events ("preprocess", "recognize") ahead of the final
+        // result line; consume them, forwarding each stage to the handler, until the result.
         let responseData: Data
         do {
-            responseData = try await readResponseLine(using: reader, timeoutMs: requestTimeoutMs)
+            responseData = try await readResultLine(using: reader, timeoutMs: requestTimeoutMs)
         } catch {
             stopWorker()
             throw error
@@ -815,6 +908,23 @@ public actor PersistentPythonSidecarOCR: OCRRecognizing {
             throw PersistentPythonSidecarOCRError.unexpectedEOF
         }
     }
+
+    /// Reads worker output lines until the final result, forwarding any `event:"progress"`
+    /// lines to the stage handler along the way. Each line read is bounded by `timeoutMs`,
+    /// which covers the long gap between the "recognize" event and the result.
+    private func readResultLine(using reader: WorkerLineReader, timeoutMs: Int) async throws -> Data {
+        while true {
+            let data = try await readResponseLine(using: reader, timeoutMs: timeoutMs)
+            let progress = try? JSONDecoder().decode(PersistentOCRWorkerProgressEnvelope.self, from: data)
+            if progress?.event == "progress",
+               let stageName = progress?.stage,
+               let stage = OCRStage.fromWorkerEvent(stageName) {
+                stageHandler?(stage)
+                continue
+            }
+            return data
+        }
+    }
 }
 
 /// Buffered line reader over a worker's stdout. Reads in chunks (vs. one byte at a time) and
@@ -871,6 +981,11 @@ private struct PersistentOCRWorkerRequest: Encodable {
         case id
         case imagePath = "image_path"
     }
+}
+
+private struct PersistentOCRWorkerProgressEnvelope: Decodable {
+    let event: String?
+    let stage: String?
 }
 
 private struct PersistentOCRWorkerReadyEnvelope: Decodable {

@@ -372,6 +372,51 @@ final class ScreenOCRCoreTests: XCTestCase {
         XCTAssertEqual(progress.currentIndex, 2)
     }
 
+    func testOCRStageToastRendersActiveStageWithLiveTimeAndPendingDashes() {
+        let progress = OCRStageProgress(
+            completedMs: [.screenCapture: 40, .pngWrite: 11, .preprocess: 30],
+            active: .recognize,
+            batchIndex: 1,
+            batchTotal: 1
+        )
+
+        let message = OCRStageToast.render(progress: progress, activeElapsedMs: 12_600)
+        let lines = message.split(separator: "\n").map(String.init)
+
+        // total = 40+11+30 + 12600 = 12681ms -> 12.7초
+        XCTAssertEqual(lines[0], "⏳ 전체 · 12.7초")
+        XCTAssertEqual(lines[1], "✓ 화면 캡처 · 0.0초")
+        XCTAssertEqual(lines[2], "✓ PNG 저장 · 0.0초")
+        XCTAssertEqual(lines[3], "✓ 전처리 · 0.0초")
+        XCTAssertEqual(lines[4], "▶ 검출+인식 · 12.6초")
+        XCTAssertEqual(lines[5], "· 클립보드 복사 · —")
+    }
+
+    func testOCRStageToastMarksCompleteAndShowsBatchPosition() {
+        let progress = OCRStageProgress(
+            completedMs: [
+                .screenCapture: 40, .pngWrite: 11, .preprocess: 30,
+                .recognize: 17_500, .clipboard: 1
+            ],
+            active: nil,
+            batchIndex: 2,
+            batchTotal: 3
+        )
+
+        let message = OCRStageToast.render(progress: progress, activeElapsedMs: 0)
+        let lines = message.split(separator: "\n").map(String.init)
+
+        XCTAssertTrue(progress.isComplete)
+        XCTAssertEqual(lines[0], "✅ 전체 2/3 · 17.6초") // 40+11+30+17500+1 = 17582ms
+        XCTAssertEqual(lines[5], "✓ 클립보드 복사 · 0.0초")
+    }
+
+    func testOCRStageMapsWorkerEvents() {
+        XCTAssertEqual(OCRStage.fromWorkerEvent("preprocess"), .preprocess)
+        XCTAssertEqual(OCRStage.fromWorkerEvent("recognize"), .recognize)
+        XCTAssertNil(OCRStage.fromWorkerEvent("bogus"))
+    }
+
     func testOCRProgressToastShowsCountOnlyForMultipleJobs() {
         XCTAssertEqual(
             OCRProgressToast.processing(index: 1, total: 1, elapsed: 0.43),

@@ -129,6 +129,19 @@ class OCRContractTests(unittest.TestCase):
         for text in unchanged:
             self.assertEqual(normalize_korean_spacing(text), text, text)
 
+    def test_handle_request_streams_preprocess_then_recognize_stages(self):
+        ocr = FakeOCR()
+        stages = []
+
+        response = handle_request(
+            {"id": "req-stage", "image_path": "fixtures/ocr/mixed-ko-en-simple.png"},
+            ocr,
+            on_progress=stages.append,
+        )
+
+        self.assertTrue(response["ok"])
+        self.assertEqual(stages, ["preprocess", "recognize"])
+
     def test_normalizes_array_like_boxes_to_json_values(self):
         raw = [
             {
