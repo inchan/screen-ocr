@@ -75,6 +75,26 @@ class OCRContractTests(unittest.TestCase):
 
         self.assertEqual(recognized_text(lines), "OCR 테스트\nHello")
 
+    def test_recognized_text_reconstructs_rows_and_reading_order_from_boxes(self):
+        # Detection order is scrambled and a single visual line is split across two
+        # boxes; layout reconstruction must merge same-row fragments left-to-right
+        # with a space and keep the lower line separate.
+        lines = [
+            {"text": "world", "score": 0.9, "box": [[120, 0], [200, 0], [200, 20], [120, 20]]},
+            {"text": "다음 줄", "score": 0.9, "box": [[0, 40], [100, 40], [100, 60], [0, 60]]},
+            {"text": "Hello", "score": 0.9, "box": [[0, 2], [80, 2], [80, 22], [0, 22]]},
+        ]
+
+        self.assertEqual(recognized_text(lines), "Hello world\n다음 줄")
+
+    def test_recognized_text_supports_flat_rect_boxes(self):
+        lines = [
+            {"text": "right", "score": 0.9, "box": [120, 0, 200, 20]},
+            {"text": "left", "score": 0.9, "box": [0, 0, 80, 20]},
+        ]
+
+        self.assertEqual(recognized_text(lines), "left right")
+
     def test_normalizes_array_like_boxes_to_json_values(self):
         raw = [
             {

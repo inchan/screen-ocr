@@ -52,13 +52,103 @@ def recognize_image(
 
 
 def recognized_text(lines: Iterable[Mapping[str, Any]]) -> str:
-    text_lines = []
+    items: list[tuple[str, dict[str, float] | None]] = []
     for line in lines:
         text = str(line.get("text", "")).strip()
-        if text:
-            text_lines.append(text)
+        if not text:
+            continue
+        items.append((text, _box_metrics(line.get("box"))))
 
-    return "\n".join(text_lines)
+    if not items:
+        return ""
+
+    if all(metrics is None for _, metrics in items):
+        return "\n".join(text for text, _ in items)
+
+    return _layout_text(items)
+
+
+def _layout_text(items: list[tuple[str, dict[str, float] | None]]) -> str:
+    heights = sorted(metrics["height"] for _, metrics in items if metrics)
+    median_height = heights[len(heights) // 2] if heights else 1.0
+    # Two boxes belong to the same row when their vertical centers are closer than
+    # a fraction of the typical text height; adjacent lines sit at least one text
+    # height apart, so this keeps real lines separate while merging fragments.
+    row_threshold = max(median_height * 0.6, 1.0)
+
+    ordered = []
+    for index, (text, metrics) in enumerate(items):
+        if metrics is None:
+            # No geometry: sink to the bottom while preserving detection order.
+            ordered.append((float("inf"), float("inf"), index, text))
+        else:
+            ordered.append((metrics["y_center"], metrics["x_left"], index, text))
+    ordered.sort(key=lambda entry: (entry[0], entry[1], entry[2]))
+
+    rows: list[list[tuple[float, int, str]]] = []
+    row_reference_y: float | None = None
+    for y_center, x_left, index, text in ordered:
+        same_row = (
+            bool(rows)
+            and row_reference_y is not None
+            and y_center != float("inf")
+            and abs(y_center - row_reference_y) <= row_threshold
+        )
+        if same_row:
+            rows[-1].append((x_left, index, text))
+        else:
+            rows.append([(x_left, index, text)])
+            row_reference_y = None if y_center == float("inf") else y_center
+
+    output_lines = []
+    for row in rows:
+        row.sort(key=lambda entry: (entry[0], entry[1]))
+        output_lines.append(" ".join(text for _, _, text in row))
+
+    return "\n".join(output_lines)
+
+
+def _is_number(value: Any) -> bool:
+    return isinstance(value, int | float) and not isinstance(value, bool)
+
+
+def _box_points(box: Any) -> list[tuple[float, float]]:
+    if not isinstance(box, list | tuple) or not box:
+        return []
+
+    if all(
+        isinstance(point, list | tuple)
+        and len(point) >= 2
+        and _is_number(point[0])
+        and _is_number(point[1])
+        for point in box
+    ):
+        return [(float(point[0]), float(point[1])) for point in box]
+
+    flat = [float(value) for value in box if _is_number(value)]
+    if len(flat) >= 4 and len(flat) % 2 == 0:
+        return [(flat[i], flat[i + 1]) for i in range(0, len(flat), 2)]
+
+    if len(box) == 1 and isinstance(box[0], list | tuple):
+        return _box_points(box[0])
+
+    return []
+
+
+def _box_metrics(box: Any) -> dict[str, float] | None:
+    points = _box_points(box)
+    if not points:
+        return None
+
+    xs = [x for x, _ in points]
+    ys = [y for _, y in points]
+    y_top = min(ys)
+    y_bottom = max(ys)
+    return {
+        "x_left": min(xs),
+        "y_center": (y_top + y_bottom) / 2.0,
+        "height": max(1.0, y_bottom - y_top),
+    }
 
 
 def normalize_predict_result(raw: Any) -> list[Line]:
