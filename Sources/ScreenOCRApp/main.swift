@@ -15,6 +15,22 @@ final class ScreenOCRApp: NSObject, NSApplicationDelegate {
     private var persistentOCR: PersistentPythonSidecarOCR?
     private let copyToastPresenter = CopyToastPresenter()
 
+    // Serial OCR queue: region selection runs immediately per hotkey, but the captured images
+    // are processed one at a time so they never collide on the shared worker pipe. The batch
+    // counter drives the live "n/m" toast.
+    private var ocrJobQueue: [OCRJob] = []
+    private var isDrainingQueue = false
+    private var batchProgress = OCRBatchProgress()
+    private var progressTimerTask: Task<Void, Never>?
+    private var activeJobStartedAt: Date?
+    private var progressToastShown = false
+
+    private struct OCRJob {
+        let image: CapturedImage
+        let paths: AppRuntimePaths
+        let isFixture: Bool
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         configureStatusItem()
         registerHotKey()
@@ -136,116 +152,217 @@ final class ScreenOCRApp: NSObject, NSApplicationDelegate {
     }
 
     private func runScreenOCRFromHotKey() async {
+        writeAppStatus(
+            status: "capture_hotkey_received",
+            details: ["shortcut": "Cmd+Shift+0"]
+        )
+        updateStatus("Capture requested")
+
+        guard ensureScreenCapturePermission() else {
+            return
+        }
+
+        updateStatus("Select a region...")
+        let paths = runtimePaths()
+        let capture = ScreenCaptureKitImageCapture(
+            outputDirectory: paths.captureOutputDirectory,
+            selectRegion: { [self] in
+                try await self.selectionOverlay.selectRegion()
+            }
+        )
+
+        // Capture (region selection + screenshot) happens immediately so the user can keep
+        // selecting more regions; only the OCR stage is queued.
         do {
-            writeAppStatus(
-                status: "capture_hotkey_received",
-                details: ["shortcut": "Cmd+Shift+0"]
-            )
-            updateStatus("Capture requested")
-
-            guard ensureScreenCapturePermission() else {
-                return
-            }
-
-            updateStatus("Select a region...")
-            let paths = runtimePaths()
-            let ocr = ocrRecognizer(paths: paths)
-
-            let pipeline = ScreenOCRPipeline(
-                capture: ScreenCaptureKitImageCapture(
-                    outputDirectory: paths.captureOutputDirectory,
-                    selectRegion: { [self] in
-                        try await self.selectionOverlay.selectRegion()
-                    }
-                ),
-                ocr: ocr,
-                clipboard: PasteboardClipboard()
-            )
-
-            let report = try await pipeline.run()
-            let debugResult = saveDebugArtifacts(for: report, paths: paths)
-
-            switch report.status {
-            case .copiedText:
-                updateStatus("Copied \(report.lineCount) OCR lines")
-                showCopiedToast()
-            case .failed(let stage):
-                updateStatus("OCR \(stage.diagnosticValue) failed")
-            }
-
-            var details: [String: String] = [
-                "run_status": report.status.diagnosticValue,
-                "line_count": "\(report.lineCount)",
-                "captured_image_id": report.capturedImageID
-            ]
-            if let capturedImagePath = report.capturedImagePath {
-                details["captured_image_path"] = capturedImagePath
-            }
-            if let errorMessage = report.errorMessage {
-                details["error_message"] = errorMessage
-            }
-            if let timings = report.timings {
-                details.merge(timings.diagnosticStringPayload) { _, new in new }
-            }
-            details.merge(report.ocrDiagnostics.mapValues(String.init)) { _, new in new }
-            details.merge(report.ocrMetadata) { _, new in new }
-            if let debugPair = debugResult.pair {
-                details["debug_image_path"] = debugPair.imagePath
-                details["debug_text_path"] = debugPair.textPath
-                details["debug_manifest_path"] = debugPair.manifestPath
-                details["debug_latest_manifest_path"] = debugPair.latestManifestPath
-            }
-            if let debugError = debugResult.errorMessage {
-                details["debug_artifact_error"] = debugError
-            }
-
-            writeAppStatus(
-                status: report.status == .copiedText ? "capture_ocr_finished" : "capture_ocr_failed",
-                details: details
-            )
+            let image = try await capture.captureRegion()
+            enqueueOCRJob(OCRJob(image: image, paths: paths, isFixture: false))
         } catch {
-            updateStatus("OCR failed: \(error.localizedDescription)")
-            writeAppStatus(status: "capture_ocr_error", details: ["error": error.localizedDescription])
+            updateStatus("Capture failed: \(error.localizedDescription)")
+            writeAppStatus(status: "capture_failed", details: ["error": error.localizedDescription])
         }
     }
 
     private func runFixtureOCRFlow() async {
-        do {
-            updateStatus("Running fixture OCR...")
-            let paths = runtimePaths()
-            let ocr = ocrRecognizer(paths: paths)
+        let paths = runtimePaths()
+        let image = CapturedImage(
+            id: "fixture://mixed-ko-en-simple",
+            width: 640,
+            height: 220,
+            filePath: paths.fixtureImage.path
+        )
+        enqueueOCRJob(OCRJob(image: image, paths: paths, isFixture: true))
+    }
 
-            let pipeline = ScreenOCRPipeline(
-                capture: StaticImageCapture(
-                    image: CapturedImage(
-                        id: "fixture://mixed-ko-en-simple",
-                        width: 640,
-                        height: 220,
-                        filePath: paths.fixtureImage.path
-                    )
-                ),
-                ocr: ocr,
-                clipboard: PasteboardClipboard()
-            )
+    // MARK: - Serial OCR queue
 
-            let report = try await pipeline.run()
-            updateStatus("Copied \(report.lineCount) fixture OCR lines")
-            if report.status == .copiedText {
-                showCopiedToast()
-            }
-            writeAppStatus(
-                status: "fixture_ocr_finished",
-                details: [
-                    "run_status": "\(report.status)",
-                    "line_count": "\(report.lineCount)"
-                ].merging(report.timings?.diagnosticStringPayload ?? [:]) { _, new in new }
-                    .merging(report.ocrDiagnostics.mapValues(String.init)) { _, new in new }
-                    .merging(report.ocrMetadata) { _, new in new }
-            )
-        } catch {
-            updateStatus("Fixture OCR failed: \(error.localizedDescription)")
-            writeAppStatus(status: "fixture_ocr_error", details: ["error": error.localizedDescription])
+    private func enqueueOCRJob(_ job: OCRJob) {
+        batchProgress.enqueue()
+        ocrJobQueue.append(job)
+        updateStatus("Queued OCR (\(batchProgress.currentIndex)/\(batchProgress.total))")
+        if !isDrainingQueue {
+            Task { await drainQueue() }
         }
+    }
+
+    private func drainQueue() async {
+        isDrainingQueue = true
+        while !ocrJobQueue.isEmpty {
+            let job = ocrJobQueue.removeFirst()
+            await processOCRJob(job)
+            batchProgress.complete()
+        }
+        isDrainingQueue = false
+        stopProgressTimer()
+        activeJobStartedAt = nil
+    }
+
+    private func processOCRJob(_ job: OCRJob) async {
+        let started = Date()
+        activeJobStartedAt = started
+        startProgressTimer()
+
+        let pipeline = ScreenOCRPipeline(
+            capture: StaticImageCapture(image: job.image),
+            ocr: ocrRecognizer(paths: job.paths),
+            clipboard: PasteboardClipboard()
+        )
+
+        do {
+            let report = try await pipeline.run()
+            stopProgressTimer()
+            let elapsed = Date().timeIntervalSince(started)
+            let debugResult = saveDebugArtifacts(for: report, paths: job.paths)
+            finishOCRJob(report: report, job: job, elapsed: elapsed, debugResult: debugResult)
+        } catch {
+            stopProgressTimer()
+            updateStatus("OCR failed: \(error.localizedDescription)")
+            showTerminalToast(OCRProgressToast.failed(reason: error.localizedDescription))
+            writeAppStatus(
+                status: job.isFixture ? "fixture_ocr_error" : "capture_ocr_error",
+                details: ["error": error.localizedDescription]
+            )
+        }
+    }
+
+    private func finishOCRJob(
+        report: ScreenOCRRunReport,
+        job: OCRJob,
+        elapsed: TimeInterval,
+        debugResult: (pair: OCRDebugArtifactPair?, errorMessage: String?)
+    ) {
+        switch report.status {
+        case .copiedText:
+            // "완료" is only declared once the clipboard write actually succeeded (.copiedText).
+            updateStatus("Copied \(report.lineCount) OCR lines")
+            showTerminalToast(
+                OCRProgressToast.copied(
+                    index: batchProgress.currentIndex,
+                    total: batchProgress.total,
+                    elapsed: elapsed
+                )
+            )
+        case .failed(let stage):
+            updateStatus("OCR \(stage.diagnosticValue) failed")
+            showTerminalToast(OCRProgressToast.failed(reason: stage.diagnosticValue))
+        }
+
+        var details: [String: String] = [
+            "run_status": report.status.diagnosticValue,
+            "line_count": "\(report.lineCount)",
+            "captured_image_id": report.capturedImageID,
+            "queue_index": "\(batchProgress.currentIndex)",
+            "queue_total": "\(batchProgress.total)",
+            "processing_elapsed_ms": "\(Int((elapsed * 1000).rounded()))"
+        ]
+        if let capturedImagePath = report.capturedImagePath {
+            details["captured_image_path"] = capturedImagePath
+        }
+        if let errorMessage = report.errorMessage {
+            details["error_message"] = errorMessage
+        }
+        if let timings = report.timings {
+            details.merge(timings.diagnosticStringPayload) { _, new in new }
+        }
+        details.merge(report.ocrDiagnostics.mapValues(String.init)) { _, new in new }
+        details.merge(report.ocrMetadata) { _, new in new }
+        if let debugPair = debugResult.pair {
+            details["debug_image_path"] = debugPair.imagePath
+            details["debug_text_path"] = debugPair.textPath
+            details["debug_manifest_path"] = debugPair.manifestPath
+            details["debug_latest_manifest_path"] = debugPair.latestManifestPath
+        }
+        if let debugError = debugResult.errorMessage {
+            details["debug_artifact_error"] = debugError
+        }
+
+        let statusKey: String
+        if job.isFixture {
+            statusKey = report.status == .copiedText ? "fixture_ocr_finished" : "fixture_ocr_failed"
+        } else {
+            statusKey = report.status == .copiedText ? "capture_ocr_finished" : "capture_ocr_failed"
+        }
+        writeAppStatus(status: statusKey, details: details)
+    }
+
+    // MARK: - Live progress toast
+
+    private func startProgressTimer() {
+        progressTimerTask?.cancel()
+        let anchor = toastAnchor()
+        renderProgressToast(anchor: anchor)
+        progressTimerTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 100_000_000)
+                if Task.isCancelled { break }
+                await MainActor.run {
+                    self?.renderProgressToast(anchor: anchor)
+                }
+            }
+        }
+    }
+
+    private func stopProgressTimer() {
+        progressTimerTask?.cancel()
+        progressTimerTask = nil
+    }
+
+    private func renderProgressToast(anchor: (anchorFrame: CGRect?, visibleFrame: CGRect?)) {
+        let elapsed = activeJobStartedAt.map { Date().timeIntervalSince($0) } ?? 0
+        let message = OCRProgressToast.processing(
+            index: batchProgress.currentIndex,
+            total: batchProgress.total,
+            elapsed: elapsed
+        )
+        if progressToastShown {
+            copyToastPresenter.update(message: message)
+        } else {
+            copyToastPresenter.showSticky(
+                message: message,
+                anchorFrame: anchor.anchorFrame,
+                visibleFrame: anchor.visibleFrame
+            )
+            progressToastShown = true
+        }
+    }
+
+    private func showTerminalToast(_ message: String) {
+        let anchor = toastAnchor()
+        copyToastPresenter.show(
+            message: message,
+            anchorFrame: anchor.anchorFrame,
+            visibleFrame: anchor.visibleFrame
+        )
+        progressToastShown = false
+    }
+
+    private func toastAnchor() -> (anchorFrame: CGRect?, visibleFrame: CGRect?) {
+        guard let button = statusItem?.button,
+              let window = button.window,
+              let screen = window.screen ?? NSScreen.main else {
+            return (nil, nil)
+        }
+        let anchorFrame = button.convert(button.bounds, to: nil)
+        return (window.convertToScreen(anchorFrame), screen.visibleFrame)
     }
 
     @objc private func quit() {
@@ -269,23 +386,6 @@ final class ScreenOCRApp: NSObject, NSApplicationDelegate {
 
     private func updateStatus(_ text: String) {
         statusMenuItem?.title = text
-    }
-
-    private func showCopiedToast() {
-        guard let button = statusItem?.button,
-              let window = button.window,
-              let screen = window.screen ?? NSScreen.main else {
-            copyToastPresenter.show(message: ClipboardCopyToast.message, anchorFrame: nil, visibleFrame: nil)
-            return
-        }
-
-        let anchorFrame = button.convert(button.bounds, to: nil)
-        let screenAnchorFrame = window.convertToScreen(anchorFrame)
-        copyToastPresenter.show(
-            message: ClipboardCopyToast.message,
-            anchorFrame: screenAnchorFrame,
-            visibleFrame: screen.visibleFrame
-        )
     }
 
     private func saveDebugArtifacts(
@@ -587,9 +687,39 @@ private struct StaticImageCapture: ImageCapturing {
 private final class CopyToastPresenter {
     private var window: NSWindow?
     private var closeTask: Task<Void, Never>?
-    private let preferredSize = CGSize(width: 210, height: 44)
+    private let preferredSize = CGSize(width: 240, height: 44)
 
+    /// Shows a toast that dismisses itself after a short delay. Used for terminal states
+    /// (copy complete / failure).
     func show(message: String, anchorFrame: CGRect?, visibleFrame: CGRect?) {
+        present(message: message, anchorFrame: anchorFrame, visibleFrame: visibleFrame)
+        closeTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 1_600_000_000)
+            await MainActor.run {
+                self?.window?.orderOut(nil)
+            }
+        }
+    }
+
+    /// Shows a toast that stays on screen until explicitly updated or dismissed. Used for the
+    /// live "처리 중 n/m · 0.x초" indicator while the OCR queue drains.
+    func showSticky(message: String, anchorFrame: CGRect?, visibleFrame: CGRect?) {
+        present(message: message, anchorFrame: anchorFrame, visibleFrame: visibleFrame)
+    }
+
+    /// Replaces the text of the currently visible toast in place (cheap; no reframing).
+    func update(message: String) {
+        guard let window else { return }
+        window.contentView = ToastView(message: message)
+        window.orderFrontRegardless()
+    }
+
+    func dismiss() {
+        closeTask?.cancel()
+        window?.orderOut(nil)
+    }
+
+    private func present(message: String, anchorFrame: CGRect?, visibleFrame: CGRect?) {
         closeTask?.cancel()
 
         let visibleFrame = visibleFrame ?? NSScreen.main?.visibleFrame ?? CGRect(x: 0, y: 0, width: 320, height: 240)
@@ -615,13 +745,6 @@ private final class CopyToastPresenter {
         toastWindow.alphaValue = 1
         toastWindow.orderFrontRegardless()
         window = toastWindow
-
-        closeTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 1_600_000_000)
-            await MainActor.run {
-                self?.window?.orderOut(nil)
-            }
-        }
     }
 
     private func makeWindow() -> NSWindow {
@@ -646,7 +769,7 @@ private final class ToastView: NSView {
 
     init(message: String) {
         self.message = message
-        super.init(frame: CGRect(origin: .zero, size: CGSize(width: 210, height: 44)))
+        super.init(frame: CGRect(origin: .zero, size: CGSize(width: 240, height: 44)))
         wantsLayer = true
         layer?.cornerRadius = 10
         layer?.backgroundColor = NSColor.windowBackgroundColor.withAlphaComponent(0.96).cgColor

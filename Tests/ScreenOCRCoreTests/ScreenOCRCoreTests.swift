@@ -337,6 +337,59 @@ final class ScreenOCRCoreTests: XCTestCase {
         let ocrMetadata = manifest?["ocr_metadata"] as? [String: Any]
         XCTAssertEqual(ocrMetadata?["preprocess_status"] as? String, "applied")
     }
+
+    func testOCRBatchProgressCountsThroughBatchAndResetsWhenDrained() {
+        var progress = OCRBatchProgress()
+        XCTAssertFalse(progress.isActive)
+
+        progress.enqueue()
+        progress.enqueue()
+        progress.enqueue()
+        XCTAssertTrue(progress.isActive)
+        XCTAssertEqual(progress.total, 3)
+        XCTAssertEqual(progress.currentIndex, 1)
+
+        progress.complete()
+        XCTAssertEqual(progress.currentIndex, 2)
+        progress.complete()
+        XCTAssertEqual(progress.currentIndex, 3)
+
+        progress.complete()
+        // Batch drained: counters reset so the next burst starts at 1 again.
+        XCTAssertFalse(progress.isActive)
+        XCTAssertEqual(progress.total, 0)
+        XCTAssertEqual(progress.completed, 0)
+    }
+
+    func testOCRBatchProgressGrowsWhenMoreJobsArriveMidBatch() {
+        var progress = OCRBatchProgress()
+        progress.enqueue()
+        progress.enqueue()
+        progress.complete() // finished 1 of 2
+
+        progress.enqueue() // a third capture arrives while draining
+        XCTAssertEqual(progress.total, 3)
+        XCTAssertEqual(progress.currentIndex, 2)
+    }
+
+    func testOCRProgressToastShowsCountOnlyForMultipleJobs() {
+        XCTAssertEqual(
+            OCRProgressToast.processing(index: 1, total: 1, elapsed: 0.43),
+            "⏳ 처리 중 · 0.4초"
+        )
+        XCTAssertEqual(
+            OCRProgressToast.processing(index: 2, total: 3, elapsed: 1.28),
+            "⏳ 처리 중 2/3 · 1.3초"
+        )
+        XCTAssertEqual(
+            OCRProgressToast.copied(index: 2, total: 3, elapsed: 2.0),
+            "✅ 복사 완료 2/3 · 2.0초"
+        )
+        XCTAssertEqual(
+            OCRProgressToast.copied(index: 1, total: 1, elapsed: 0.05),
+            "✅ 복사 완료 · 0.1초"
+        )
+    }
 }
 
 private struct FakeCapture: ImageCapturing {

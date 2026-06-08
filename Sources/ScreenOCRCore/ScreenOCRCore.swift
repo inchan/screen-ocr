@@ -97,6 +97,67 @@ public final class PasteboardClipboard: ClipboardWriting {
 }
 #endif
 
+/// Tracks a serial OCR batch — how many jobs are queued and how many have finished — so the
+/// UI can show "n/m" while the queue drains. Resets to empty once the batch fully drains, so a
+/// later burst of captures starts counting from 1 again.
+public struct OCRBatchProgress: Equatable, Sendable {
+    public private(set) var total: Int
+    public private(set) var completed: Int
+
+    public init(total: Int = 0, completed: Int = 0) {
+        self.total = total
+        self.completed = completed
+    }
+
+    /// True while at least one queued job has not finished.
+    public var isActive: Bool { completed < total }
+
+    /// 1-based index of the job currently being processed (clamped to a sane value when idle).
+    public var currentIndex: Int { min(completed + 1, max(total, 1)) }
+
+    /// Records a newly captured job waiting for OCR.
+    public mutating func enqueue() {
+        total += 1
+    }
+
+    /// Marks the in-flight job as finished. When the batch fully drains, resets to empty.
+    public mutating func complete() {
+        completed += 1
+        if completed >= total {
+            total = 0
+            completed = 0
+        }
+    }
+}
+
+/// Formats the live progress toast text. Shows the "n/m" position only when more than one job
+/// is in the batch, and renders elapsed time as `0.x초`.
+public enum OCRProgressToast {
+    public static func processing(index: Int, total: Int, elapsed: TimeInterval) -> String {
+        let seconds = formatSeconds(elapsed)
+        if total > 1 {
+            return "⏳ 처리 중 \(index)/\(total) · \(seconds)초"
+        }
+        return "⏳ 처리 중 · \(seconds)초"
+    }
+
+    public static func copied(index: Int, total: Int, elapsed: TimeInterval) -> String {
+        let seconds = formatSeconds(elapsed)
+        if total > 1 {
+            return "✅ 복사 완료 \(index)/\(total) · \(seconds)초"
+        }
+        return "✅ 복사 완료 · \(seconds)초"
+    }
+
+    public static func failed(reason: String) -> String {
+        "⚠️ OCR 실패 · \(reason)"
+    }
+
+    static func formatSeconds(_ elapsed: TimeInterval) -> String {
+        String(format: "%.1f", max(0, elapsed))
+    }
+}
+
 public enum ClipboardCopyToast {
     public static let message = "📋 Copied to clipboard"
 
