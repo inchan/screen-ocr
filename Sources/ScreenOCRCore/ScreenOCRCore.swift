@@ -640,7 +640,11 @@ public actor PersistentPythonSidecarOCR: OCRRecognizing {
            value > 0 {
             return value
         }
-        return 15000
+        // A dense, near-full-screen capture (e.g. 3190x1728 with dozens of text lines)
+        // legitimately takes ~18s to recognize on CPU. A 15s timeout killed such jobs
+        // mid-flight and then forced a cold worker restart on the next request — a death
+        // spiral. 30s comfortably covers large captures while still catching a true hang.
+        return 30000
     }
 
     deinit {
