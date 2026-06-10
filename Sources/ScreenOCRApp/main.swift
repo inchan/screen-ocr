@@ -17,6 +17,7 @@ final class ScreenOCRApp: NSObject, NSApplicationDelegate {
     private var settingsWindowController: SettingsWindowController?
     private var retentionTimer: Timer?
     private var lastScreenRecordingAlertDate: Date?
+    private let permissionDropPanel = PermissionDropPanelController()
     private let selectionOverlay = SelectionOverlayController()
     private var persistentOCR: PersistentPythonSidecarOCR?
     private let copyToastPresenter = CopyToastPresenter()
@@ -855,6 +856,13 @@ final class ScreenOCRApp: NSObject, NSApplicationDelegate {
     }()
 
     @objc private func openScreenRecordingSettings() {
+        // While the permission is still missing, float the drag-and-drop helper beside the
+        // Settings window: dropping the app icon into the permission list registers the app
+        // without digging through a file picker.
+        if !CGPreflightScreenCaptureAccess() {
+            permissionDropPanel.show()
+        }
+
         let urls = [
             "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
             "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_ScreenCapture"
