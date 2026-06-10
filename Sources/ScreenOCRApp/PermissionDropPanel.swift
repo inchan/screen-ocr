@@ -6,6 +6,7 @@ import AppKit
 @MainActor
 final class PermissionDropPanelController {
     private var panel: NSPanel?
+    private var positioningTask: Task<Void, Never>?
 
     func show() {
         if let panel {
@@ -60,18 +61,85 @@ final class PermissionDropPanelController {
 
         panel.contentView = content
         panel.center()
-        // Nudge to the left so it sits beside the System Settings window instead of under it.
-        if let screen = NSScreen.main {
-            panel.setFrameOrigin(CGPoint(
-                x: screen.visibleFrame.minX + 80,
-                y: panel.frame.origin.y
-            ))
-        }
         panel.makeKeyAndOrderFront(nil)
         self.panel = panel
+        snapBesideSystemSettings()
+    }
+
+    /// Positions the panel next to the System Settings window: to its right when there is
+    /// room, otherwise below it. Settings takes a moment to launch, so poll briefly; window
+    /// bounds and owner PIDs are readable without any permission (only titles are gated).
+    private func snapBesideSystemSettings() {
+        positioningTask?.cancel()
+        positioningTask = Task { [weak self] in
+            for _ in 0..<12 {
+                try? await Task.sleep(nanoseconds: 300_000_000)
+                guard let self, let panel = self.panel, panel.isVisible else { return }
+                guard let settingsFrame = Self.systemSettingsWindowFrame() else { continue }
+
+                let gap: CGFloat = 16
+                let panelSize = panel.frame.size
+                let visible = (NSScreen.main ?? NSScreen.screens.first)?.visibleFrame
+                    ?? CGRect(x: 0, y: 0, width: 1440, height: 900)
+
+                // Prefer the right edge, top-aligned; fall back to below, left-aligned.
+                var origin = CGPoint(
+                    x: settingsFrame.maxX + gap,
+                    y: settingsFrame.maxY - panelSize.height
+                )
+                if origin.x + panelSize.width > visible.maxX {
+                    origin = CGPoint(
+                        x: settingsFrame.minX,
+                        y: settingsFrame.minY - panelSize.height - gap
+                    )
+                }
+                origin.x = min(max(origin.x, visible.minX), visible.maxX - panelSize.width)
+                origin.y = min(max(origin.y, visible.minY), visible.maxY - panelSize.height)
+
+                panel.setFrameOrigin(origin)
+                return
+            }
+        }
+    }
+
+    /// Frame of the main System Settings window in AppKit (bottom-left origin) coordinates,
+    /// or nil while it has not appeared yet.
+    private static func systemSettingsWindowFrame() -> CGRect? {
+        guard let settings = NSRunningApplication
+            .runningApplications(withBundleIdentifier: "com.apple.systempreferences").first
+        else { return nil }
+
+        guard let entries = CGWindowListCopyWindowInfo(
+            [.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID
+        ) as? [[String: Any]] else { return nil }
+
+        for entry in entries {
+            guard let pid = entry[kCGWindowOwnerPID as String] as? Int32,
+                  pid == settings.processIdentifier,
+                  (entry[kCGWindowLayer as String] as? Int) == 0,
+                  let bounds = entry[kCGWindowBounds as String] as? [String: CGFloat]
+            else { continue }
+
+            let width = bounds["Width"] ?? 0
+            let height = bounds["Height"] ?? 0
+            // Skip tooltips/sheets — the real Settings window is the only sizeable one.
+            guard width > 300, height > 300 else { continue }
+
+            // CGWindow bounds use a top-left origin on the primary display; AppKit uses
+            // bottom-left. Flip through the primary screen's height.
+            let primaryHeight = NSScreen.screens.first?.frame.height ?? 0
+            return CGRect(
+                x: bounds["X"] ?? 0,
+                y: primaryHeight - (bounds["Y"] ?? 0) - height,
+                width: width,
+                height: height
+            )
+        }
+        return nil
     }
 
     func close() {
+        positioningTask?.cancel()
         panel?.close()
     }
 
