@@ -170,7 +170,9 @@ public enum OCRStage: String, CaseIterable, Sendable {
     public var label: String {
         switch self {
         case .screenCapture: return "화면 캡처"
-        case .pngWrite: return "PNG 저장"
+        // The capture file is uncompressed TIFF for speed; the case keeps its historical
+        // "pngWrite" wire name so diagnostics/timing keys stay comparable across versions.
+        case .pngWrite: return "이미지 저장"
         case .preprocess: return "전처리"
         case .recognize: return "검출+인식"
         case .clipboard: return "클립보드 복사"
@@ -544,7 +546,11 @@ public struct OCRDebugArtifactWriter {
 
         let sourceImageURL = URL(fileURLWithPath: capturedImagePath)
         let runID = sourceImageURL.deletingPathExtension().lastPathComponent
-        let imageURL = outputDirectory.appendingPathComponent(runID).appendingPathExtension("png")
+        // Keep the capture's own container (uncompressed TIFF today) — the copy is an APFS
+        // clone on the pre-toast path, so re-encoding here would cost what the fast capture
+        // format just saved.
+        let imageExtension = sourceImageURL.pathExtension.isEmpty ? "png" : sourceImageURL.pathExtension
+        let imageURL = outputDirectory.appendingPathComponent(runID).appendingPathExtension(imageExtension)
         let textURL = outputDirectory.appendingPathComponent(runID).appendingPathExtension("txt")
         let manifestURL = outputDirectory.appendingPathComponent(runID).appendingPathExtension("json")
         let latestManifestURL = outputDirectory.appendingPathComponent("latest-pair.json")

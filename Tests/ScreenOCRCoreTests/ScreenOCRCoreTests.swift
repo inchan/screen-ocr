@@ -275,6 +275,37 @@ final class ScreenOCRCoreTests: XCTestCase {
         }
     }
 
+    func testDebugArtifactWriterKeepsSourceImageExtension() throws {
+        // Captures are written as uncompressed TIFF; the debug copy must keep that container
+        // instead of mislabeling TIFF bytes with a .png name.
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("screen-ocr-debug-tests-\(UUID().uuidString)", isDirectory: true)
+        let sourceImageURL = directory.appendingPathComponent("captures/screen-ocr-debug-source.tiff")
+        try FileManager.default.createDirectory(
+            at: sourceImageURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data([0x4D, 0x4D, 0x00, 0x2A]).write(to: sourceImageURL)
+
+        let report = ScreenOCRRunReport(
+            status: .copiedText,
+            capturedImageID: "screen://1/1234",
+            capturedImagePath: sourceImageURL.path,
+            recognizedText: "OCR",
+            lineCount: 1,
+            errorMessage: nil,
+            timings: nil,
+            ocrDiagnostics: [:],
+            ocrMetadata: [:]
+        )
+        let pair = try OCRDebugArtifactWriter(
+            outputDirectory: directory.appendingPathComponent("debug-runs", isDirectory: true)
+        ).savePair(from: report, createdAt: Date(timeIntervalSince1970: 0))
+
+        XCTAssertTrue(pair.imagePath.hasSuffix("screen-ocr-debug-source.tiff"))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: pair.imagePath))
+    }
+
     func testDebugArtifactWriterSavesImageTextAndManifestAsPair() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("screen-ocr-debug-tests-\(UUID().uuidString)", isDirectory: true)
@@ -392,7 +423,7 @@ final class ScreenOCRCoreTests: XCTestCase {
         // total = 40+11+30 + 12600 = 12681ms -> 12.68초
         XCTAssertEqual(lines[0], "⏳ 전체\t12.68초")
         XCTAssertEqual(lines[1], "✓ 화면 캡처\t0.04초")
-        XCTAssertEqual(lines[2], "✓ PNG 저장\t0.01초")
+        XCTAssertEqual(lines[2], "✓ 이미지 저장\t0.01초")
         XCTAssertEqual(lines[3], "✓ 전처리\t0.03초")
         XCTAssertEqual(lines[4], "▶ 검출+인식\t12.60초")
     }
@@ -404,9 +435,9 @@ final class ScreenOCRCoreTests: XCTestCase {
         )
         let lines = OCRStageToast.render(progress: progress, activeElapsedMs: 50)
             .split(separator: "\n").map(String.init)
-        XCTAssertEqual(lines.count, 3) // total + 화면 캡처 + (active) PNG 저장
+        XCTAssertEqual(lines.count, 3) // total + 화면 캡처 + (active) 이미지 저장
         XCTAssertTrue(lines.allSatisfy { $0.filter { $0 == "\t" }.count == 1 })
-        XCTAssertEqual(lines[2], "▶ PNG 저장\t0.05초")
+        XCTAssertEqual(lines[2], "▶ 이미지 저장\t0.05초")
     }
 
     func testOCRStageToastMarksCompleteAndShowsBatchPosition() {

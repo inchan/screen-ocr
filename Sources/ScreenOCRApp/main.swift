@@ -2,8 +2,10 @@ import AppKit
 import Carbon.HIToolbox
 import CoreGraphics
 import Foundation
+import ImageIO
 import ScreenOCRCore
 import ServiceManagement
+import UniformTypeIdentifiers
 
 @MainActor
 final class ScreenOCRApp: NSObject, NSApplicationDelegate {
@@ -500,6 +502,7 @@ final class ScreenOCRApp: NSObject, NSApplicationDelegate {
                 ))
             }
             persistUserArtifacts(report: report)
+            removeTemporaryCapture(report: report, job: job)
         case .failed(let stage):
             updateStatus("OCR \(stage.diagnosticValue) failed")
             showTerminalToast(OCRProgressToast.failed(reason: stage.diagnosticValue))
@@ -722,20 +725,40 @@ final class ScreenOCRApp: NSObject, NSApplicationDelegate {
         retentionTimer = timer
     }
 
-    /// Deletes saved screenshots/text results older than the configured retention window.
-    /// Retention of 0 disables cleanup. Best-effort: per-file failures are skipped.
+    /// Deletes saved screenshots/text results older than the configured retention window
+    /// (0 disables it), and always prunes the app-internal capture/debug directories after a
+    /// fixed day — captures are uncompressed TIFF now, so letting them age would eat disk far
+    /// faster than the old PNGs. Best-effort: per-file failures are skipped.
     private func runRetentionSweep() {
         let settings = settingsStore.settings
-        guard settings.retentionDays > 0 else { return }
-        let directory = settings.saveDirectoryURL
-        let cutoff = Date().addingTimeInterval(-Double(settings.retentionDays) * 86_400)
+        var deleted = 0
 
+        if settings.retentionDays > 0 {
+            let cutoff = Date().addingTimeInterval(-Double(settings.retentionDays) * 86_400)
+            deleted += Self.sweepDirectory(settings.saveDirectoryURL, cutoff: cutoff)
+        }
+
+        let internalCutoff = Date().addingTimeInterval(-86_400)
+        let paths = runtimePaths()
+        deleted += Self.sweepDirectory(paths.captureOutputDirectory, cutoff: internalCutoff)
+        deleted += Self.sweepDirectory(paths.debugOutputDirectory, cutoff: internalCutoff)
+
+        if deleted > 0 {
+            writeAppStatus(
+                status: "retention_sweep",
+                details: ["deleted": "\(deleted)", "retention_days": "\(settings.retentionDays)"]
+            )
+        }
+    }
+
+    /// Removes regular files in `directory` modified before `cutoff`; returns how many.
+    private static func sweepDirectory(_ directory: URL, cutoff: Date) -> Int {
         let fm = FileManager.default
         guard let entries = try? fm.contentsOfDirectory(
             at: directory,
             includingPropertiesForKeys: [.contentModificationDateKey, .isRegularFileKey],
             options: [.skipsHiddenFiles]
-        ) else { return }
+        ) else { return 0 }
 
         var deleted = 0
         for url in entries {
@@ -747,13 +770,7 @@ final class ScreenOCRApp: NSObject, NSApplicationDelegate {
                 deleted += 1
             }
         }
-
-        if deleted > 0 {
-            writeAppStatus(
-                status: "retention_sweep",
-                details: ["deleted": "\(deleted)", "retention_days": "\(settings.retentionDays)"]
-            )
-        }
+        return deleted
     }
 
     /// Persists the captured screenshot and/or recognized text into the user's save directory,
@@ -782,10 +799,10 @@ final class ScreenOCRApp: NSObject, NSApplicationDelegate {
                 if fm.fileExists(atPath: destination.path) {
                     try fm.removeItem(at: destination)
                 }
-                try fm.copyItem(at: URL(fileURLWithPath: sourcePath), to: destination)
-                // copyItem preserves the source's modification date; stamp it to "now" so the
-                // retention sweep measures time-since-saved rather than the original capture time.
-                try? fm.setAttributes([.modificationDate: Date()], ofItemAtPath: destination.path)
+                // The capture on disk is uncompressed TIFF (fast OCR transport); the user-facing
+                // screenshot stays PNG, so transcode here — this runs after the completion toast,
+                // off the latency-critical path, and only when saving is enabled.
+                try Self.transcodeToPNG(from: URL(fileURLWithPath: sourcePath), to: destination)
             } catch {
                 writeAppStatus(status: "user_save_image_failed", details: ["error": error.localizedDescription])
             }
@@ -799,6 +816,35 @@ final class ScreenOCRApp: NSObject, NSApplicationDelegate {
                 writeAppStatus(status: "user_save_text_failed", details: ["error": error.localizedDescription])
             }
         }
+    }
+
+    /// Re-encodes any ImageIO-readable file as PNG. The mod date lands at "now", which is also
+    /// what the retention sweep should measure (time since saved, not since captured).
+    private static func transcodeToPNG(from source: URL, to destination: URL) throws {
+        guard let imageSource = CGImageSourceCreateWithURL(source as CFURL, nil),
+              let image = CGImageSourceCreateImageAtIndex(imageSource, 0, nil),
+              let imageDestination = CGImageDestinationCreateWithURL(
+                  destination as CFURL, UTType.png.identifier as CFString, 1, nil
+              ) else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+        CGImageDestinationAddImage(imageDestination, image, nil)
+        guard CGImageDestinationFinalize(imageDestination) else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+    }
+
+    /// Deletes the temporary capture file once a run has fully succeeded (clipboard written,
+    /// user/debug copies done). Captures are uncompressed TIFF, so leaving them to age would
+    /// cost ~35x the disk of the old PNGs; failed runs keep their capture so the error manifest
+    /// stays reproducible. Only files inside the app's own capture directory are touched —
+    /// fixture jobs point at bundled resources.
+    private func removeTemporaryCapture(report: ScreenOCRRunReport, job: OCRJob) {
+        guard !job.isFixture,
+              let capturedImagePath = report.capturedImagePath,
+              capturedImagePath.hasPrefix(job.paths.captureOutputDirectory.path)
+        else { return }
+        try? FileManager.default.removeItem(atPath: capturedImagePath)
     }
 
     private static let fileStampFormatter: DateFormatter = {

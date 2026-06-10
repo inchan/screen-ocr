@@ -20,7 +20,7 @@ struct ScreenCaptureKitImageCapture: ImageCapturing {
         let screenCaptureElapsedMs = elapsedMilliseconds(since: screenCaptureStarted)
 
         let pngWriteStarted = Date()
-        let fileURL = try writePNG(image)
+        let fileURL = try writeCaptureImage(image)
         let pngWriteElapsedMs = elapsedMilliseconds(since: pngWriteStarted)
         let imageCaptureElapsedMs = elapsedMilliseconds(since: imageCaptureStarted)
 
@@ -121,7 +121,12 @@ struct ScreenCaptureKitImageCapture: ImageCapturing {
         }
     }
 
-    private func writePNG(_ image: CGImage) throws -> URL {
+    /// Writes the capture as *uncompressed* TIFF. The file is a lossless transport to the OCR
+    /// sidecar, not a user-facing artifact, so encode speed beats size: PNG (zlib) takes ~89ms
+    /// for a 2560x1440 capture where uncompressed TIFF takes ~8.5ms, and the sidecar decodes
+    /// it ~5x faster as well (PIL 16.7 -> 3.2ms, cv2 25.6 -> 3.6ms). The capture is deleted
+    /// after a successful run, and user-saved screenshots are transcoded back to PNG.
+    private func writeCaptureImage(_ image: CGImage) throws -> URL {
         try FileManager.default.createDirectory(
             at: outputDirectory,
             withIntermediateDirectories: true
@@ -129,18 +134,21 @@ struct ScreenCaptureKitImageCapture: ImageCapturing {
 
         let fileURL = outputDirectory
             .appendingPathComponent("screen-ocr-\(UUID().uuidString)")
-            .appendingPathExtension("png")
+            .appendingPathExtension("tiff")
 
         guard let destination = CGImageDestinationCreateWithURL(
             fileURL as CFURL,
-            UTType.png.identifier as CFString,
+            UTType.tiff.identifier as CFString,
             1,
             nil
         ) else {
             throw ScreenCaptureKitCaptureError.cannotCreateImageDestination
         }
 
-        CGImageDestinationAddImage(destination, image, nil)
+        let properties = [
+            kCGImagePropertyTIFFDictionary: [kCGImagePropertyTIFFCompression: 1] // 1 = none
+        ] as CFDictionary
+        CGImageDestinationAddImage(destination, image, properties)
         guard CGImageDestinationFinalize(destination) else {
             throw ScreenCaptureKitCaptureError.cannotWriteImage
         }
