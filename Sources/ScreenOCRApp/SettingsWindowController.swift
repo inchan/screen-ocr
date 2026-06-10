@@ -31,6 +31,7 @@ final class SettingsWindowController: NSWindowController {
     private var hotkeyToastHideWork: DispatchWorkItem?
     private var launchCheckbox: NSButton!
     private var debugCheckbox: NSButton!
+    private var enginePopup: NSPopUpButton!
 
     /// Toast container that never intercepts clicks aimed at the controls underneath it.
     private final class PassthroughEffectView: NSVisualEffectView {
@@ -39,6 +40,11 @@ final class SettingsWindowController: NSWindowController {
 
     private let retentionOptions: [(title: String, days: Int)] = [
         ("끄기", 0), ("1일", 1), ("7일", 7), ("30일", 30)
+    ]
+
+    private let engineOptions: [(title: String, engine: OCREngineChoice)] = [
+        ("PaddleOCR (정밀 · 한국어 특화)", .paddleOCR),
+        ("Apple Vision (빠름 · macOS 내장)", .vision)
     ]
 
     init(store: SettingsStore) {
@@ -112,6 +118,11 @@ final class SettingsWindowController: NSWindowController {
 
         debugCheckbox = NSButton(checkboxWithTitle: "진행 상황 팝업 표시 (단계별 소요 시간)", target: self, action: #selector(toggleDebug))
 
+        enginePopup = NSPopUpButton()
+        enginePopup.addItems(withTitles: engineOptions.map(\.title))
+        enginePopup.target = self
+        enginePopup.action = #selector(changeEngine)
+
         let screenRecordingButton = NSButton(
             title: "화면 기록 설정 열기…",
             target: self,
@@ -127,6 +138,7 @@ final class SettingsWindowController: NSWindowController {
             [makeCaption("캡처 단축키"), wrap(hotkeyRecorder)],
             [makeCaption("시작 프로그램"), wrap(launchCheckbox)],
             [makeCaption("디버깅"), wrap(debugCheckbox)],
+            [makeCaption("인식 엔진"), labeled(enginePopup, suffix: "— 다음 캡처부터 적용됨")],
             [makeCaption("권한"), wrap(screenRecordingButton)]
         ])
         grid.translatesAutoresizingMaskIntoConstraints = false
@@ -211,6 +223,8 @@ final class SettingsWindowController: NSWindowController {
         hotkeyRecorder.setConfig(settings.hotkey)
         launchCheckbox.state = settings.launchAtLogin ? .on : .off
         debugCheckbox.state = settings.showDebugProgress ? .on : .off
+        let engineIndex = engineOptions.firstIndex { $0.engine == settings.ocrEngine } ?? 0
+        enginePopup.selectItem(at: engineIndex)
     }
 
     // MARK: - Actions
@@ -229,6 +243,12 @@ final class SettingsWindowController: NSWindowController {
 
     @objc private func toggleDebug() {
         store.update { $0.showDebugProgress = (debugCheckbox.state == .on) }
+    }
+
+    @objc private func changeEngine() {
+        let index = enginePopup.indexOfSelectedItem
+        guard engineOptions.indices.contains(index) else { return }
+        store.update { $0.ocrEngine = engineOptions[index].engine }
     }
 
     @objc private func changeRetention() {

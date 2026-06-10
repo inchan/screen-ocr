@@ -338,25 +338,34 @@ final class ScreenOCRApp: NSObject, NSApplicationDelegate {
         activeStageStartedAt = started
         startProgressTimer()
 
-        let ocr = ocrRecognizer(paths: job.paths)
-        await ocr.setStageHandler { [weak self] stage in
-            Task { @MainActor in
-                self?.handleWorkerStage(stage)
+        let engine = resolveOCREngine(paths: job.paths)
+
+        // Worker-specific setup: stage streaming and pid caching are only meaningful for the
+        // Python sidecar path. Vision runs in-process and has no stage events to stream.
+        // Access `persistentOCR` directly (the actor) rather than through an existential to
+        // avoid sending a main-actor-isolated value across isolation boundaries.
+        if settingsStore.settings.ocrEngine == .paddleOCR, let workerOCR = persistentOCR {
+            await workerOCR.setStageHandler { [weak self] stage in
+                Task { @MainActor in
+                    self?.handleWorkerStage(stage)
+                }
             }
         }
 
         let pipeline = ScreenOCRPipeline(
             capture: StaticImageCapture(image: job.image),
-            ocr: ocr,
+            ocr: AnyOCRRecognizing(engine),
             clipboard: PasteboardClipboard()
         )
 
         defer {
-            Task {
-                await ocr.setStageHandler(nil)
-                // Timeouts/errors restart the worker mid-job; keep the cached pid current so
-                // the quit-time SIGTERM reaches the *live* worker, not a dead one.
-                self.lastKnownWorkerPID = await ocr.workerProcessIdentifier() ?? self.lastKnownWorkerPID
+            if settingsStore.settings.ocrEngine == .paddleOCR, let workerOCR = persistentOCR {
+                Task {
+                    await workerOCR.setStageHandler(nil)
+                    // Timeouts/errors restart the worker mid-job; keep the cached pid current so
+                    // the quit-time SIGTERM reaches the *live* worker, not a dead one.
+                    self.lastKnownWorkerPID = await workerOCR.workerProcessIdentifier() ?? self.lastKnownWorkerPID
+                }
             }
         }
 
@@ -1130,7 +1139,12 @@ final class ScreenOCRApp: NSObject, NSApplicationDelegate {
     }
 
     private func prewarmOCRWorkerAtLaunch() {
-        prewarmOCRWorker()
+        if settingsStore.settings.ocrEngine == .paddleOCR {
+            prewarmOCRWorker()
+        } else {
+            // Vision engine is in-process — no worker to warm. Show Ready immediately.
+            updateStatus("Ready - \(settingsStore.settings.hotkey.displayString)")
+        }
         startWorkerWatchdog()
     }
 
@@ -1141,12 +1155,18 @@ final class ScreenOCRApp: NSObject, NSApplicationDelegate {
     /// stays non-nil for the whole startup window (the process spawns before model load), so
     /// a tick during a legitimate warmup never double-spawns; concurrent starts additionally
     /// dedupe inside startWorkerIfNeeded.
+    ///
+    /// When the user switches to Vision, ticks are skipped so a dead paddle worker is not
+    /// respawned. If the user switches back to paddle the already-live worker is reused
+    /// immediately; if it died in the meantime the next tick will respawn it.
     private func startWorkerWatchdog() {
         workerWatchdogTask?.cancel()
         workerWatchdogTask = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 10_000_000_000)
                 guard !Task.isCancelled, let self else { return }
+                // Skip respawn when Vision is selected — worker lifecycle is paddle-only.
+                guard self.settingsStore.settings.ocrEngine == .paddleOCR else { continue }
                 let ocr = self.ocrRecognizer(paths: self.runtimePaths())
                 if await ocr.workerProcessIdentifier() == nil {
                     self.prewarmOCRWorker()
@@ -1203,6 +1223,23 @@ final class ScreenOCRApp: NSObject, NSApplicationDelegate {
         )
         persistentOCR = ocr
         return ocr
+    }
+
+    /// Returns the OCR engine to use for the current capture based on the user's engine setting.
+    ///
+    /// - `.vision`: Returns a fresh `VisionOCREngine` (stateless; cheap to allocate per capture).
+    /// - `.paddleOCR`: Returns the cached `PersistentPythonSidecarOCR` (long-lived worker process).
+    ///
+    /// The return type is `any OCRRecognizing & Sendable` so callers handle both paths uniformly;
+    /// worker-specific operations (stage streaming, pid caching) are guarded by casting to
+    /// `any OCRWorkerManaging`.
+    private func resolveOCREngine(paths: AppRuntimePaths) -> any OCRRecognizing & Sendable {
+        switch settingsStore.settings.ocrEngine {
+        case .vision:
+            return VisionOCREngine()
+        case .paddleOCR:
+            return ocrRecognizer(paths: paths)
+        }
     }
 
     private func writeWorkerStatus(
@@ -1271,6 +1308,26 @@ let delegate = ScreenOCRApp()
 app.delegate = delegate
 app.setActivationPolicy(.accessory)
 app.run()
+
+// VisionOCREngine is a stateless struct — it is safe to send across isolation boundaries.
+// The conformance lives here (in the app layer) to avoid modifying the core library.
+extension VisionOCREngine: @unchecked Sendable {}
+
+/// Type-erasing wrapper so `ScreenOCRPipeline` can accept either `VisionOCREngine` or
+/// `PersistentPythonSidecarOCR` without a conditional branch per pipeline instantiation.
+/// Marked @unchecked Sendable: the stored closure captures either a struct (VisionOCREngine)
+/// or an actor (PersistentPythonSidecarOCR), both of which are independently Sendable.
+private struct AnyOCRRecognizing: OCRRecognizing, @unchecked Sendable {
+    private let _recognizeText: @Sendable (CapturedImage) async throws -> OCRDocument
+
+    init(_ engine: any OCRRecognizing & Sendable) {
+        _recognizeText = { try await engine.recognizeText(in: $0) }
+    }
+
+    func recognizeText(in image: CapturedImage) async throws -> OCRDocument {
+        try await _recognizeText(image)
+    }
+}
 
 private struct StaticImageCapture: ImageCapturing {
     let image: CapturedImage
