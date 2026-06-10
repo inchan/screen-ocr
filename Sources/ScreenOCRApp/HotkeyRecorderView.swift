@@ -15,6 +15,10 @@ final class HotkeyRecorderView: NSView {
     /// hotkey while recording so the currently registered combo reaches `keyDown` like any other
     /// key instead of triggering a capture.
     var onRecordingStateChanged: ((Bool) -> Void)?
+    /// Fired when a modifier hold was released without any keyDown arriving in between — the
+    /// signature of a combo consumed by another app's global hotkey or the system before it could
+    /// reach this process (a bare modifier tap looks identical, so this is a hint, not a verdict).
+    var onConsumedShortcutDetected: (() -> Void)?
 
     private var current: HotkeyConfig
     private var isRecording = false {
@@ -23,6 +27,9 @@ final class HotkeyRecorderView: NSView {
             onRecordingStateChanged?(isRecording)
         }
     }
+    // flagsChanged bookkeeping for the consumed-shortcut heuristic.
+    private var modifiersHeld = false
+    private var sawKeyDownDuringHold = false
     private let label = NSTextField(labelWithString: "")
 
     init(initial: HotkeyConfig) {
@@ -58,6 +65,8 @@ final class HotkeyRecorderView: NSView {
 
     override func mouseDown(with event: NSEvent) {
         window?.makeFirstResponder(self)
+        modifiersHeld = false
+        sawKeyDownDuringHold = false
         isRecording = true
         refresh()
     }
@@ -80,25 +89,52 @@ final class HotkeyRecorderView: NSView {
             super.keyDown(with: event)
             return
         }
+        handleRecordingKey(keyCode: event.keyCode, flags: event.modifierFlags)
+    }
+
+    /// Hotkey dispatch consumes both keyDown and keyUp of a combo another process registered, but
+    /// modifier transitions always reach the focused app. A hold that ends with no keyDown in
+    /// between is therefore the best available signal that the pressed combo was taken elsewhere.
+    override func flagsChanged(with event: NSEvent) {
+        guard isRecording else {
+            super.flagsChanged(with: event)
+            return
+        }
+        let holding = Self.carbonModifiers(from: event.modifierFlags) != 0
+        if holding, !modifiersHeld {
+            modifiersHeld = true
+            sawKeyDownDuringHold = false
+        } else if !holding, modifiersHeld {
+            modifiersHeld = false
+            if !sawKeyDownDuringHold {
+                onConsumedShortcutDetected?()
+            }
+        }
+    }
+
+    /// Recording-key handling for the responder chain (`keyDown`).
+    func handleRecordingKey(keyCode: UInt16, flags: NSEvent.ModifierFlags) {
+        guard isRecording else { return }
+        sawKeyDownDuringHold = true
 
         // Escape cancels recording without changing the value.
-        if event.keyCode == UInt16(kVK_Escape) {
+        if keyCode == UInt16(kVK_Escape) {
             isRecording = false
             window?.makeFirstResponder(nil)
             refresh()
             return
         }
 
-        let carbonModifiers = Self.carbonModifiers(from: event.modifierFlags)
+        let carbonModifiers = Self.carbonModifiers(from: flags)
         guard carbonModifiers != 0 else {
             NSSound.beep()  // reject modifier-less keys
             return
         }
 
         let candidate = HotkeyConfig(
-            keyCode: UInt32(event.keyCode),
+            keyCode: UInt32(keyCode),
             modifiers: carbonModifiers,
-            displayString: Self.displayString(keyCode: event.keyCode, flags: event.modifierFlags)
+            displayString: Self.displayString(keyCode: keyCode, flags: flags)
         )
 
         isRecording = false

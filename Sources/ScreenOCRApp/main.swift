@@ -102,7 +102,7 @@ final class ScreenOCRApp: NSObject, NSApplicationDelegate {
         menu.addItem(NSMenuItem.separator())
         menu.addItem(makeMenuItem(title: "Capture OCR", action: #selector(runScreenOCR)))
         menu.addItem(makeMenuItem(title: "Settings…", action: #selector(openSettings), keyEquivalent: ","))
-        menu.addItem(makeMenuItem(title: "Open Screen Recording Settings", action: #selector(openScreenRecordingSettings)))
+        // Screen-recording settings moved into the settings window's 권한 row.
         menu.addItem(makeMenuItem(title: "Quit", action: #selector(quit), keyEquivalent: "q"))
 
         item.menu = menu
@@ -151,6 +151,9 @@ final class ScreenOCRApp: NSObject, NSApplicationDelegate {
     private func makeMenuItem(title: String, action: Selector, keyEquivalent: String = "") -> NSMenuItem {
         let item = NSMenuItem(title: title, action: action, keyEquivalent: keyEquivalent)
         item.target = self
+        // Opt out of the system-provided leading icons (macOS infers one for items like
+        // "Settings…"); the menu reads cleaner as plain text.
+        item.image = nil
         return item
     }
 
@@ -680,6 +683,9 @@ final class ScreenOCRApp: NSObject, NSApplicationDelegate {
             }
             controller.applyLaunchAtLogin = { [weak self] enabled in
                 self?.applyLaunchAtLogin(enabled) ?? false
+            }
+            controller.openScreenRecordingSettings = { [weak self] in
+                self?.openScreenRecordingSettings()
             }
             settingsWindowController = controller
         }

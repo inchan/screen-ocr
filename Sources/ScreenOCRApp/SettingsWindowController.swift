@@ -17,16 +17,25 @@ final class SettingsWindowController: NSWindowController {
     var setHotkeySuspended: ((Bool) -> Void)?
     /// Applies launch-at-login. Return `true` if the change took effect.
     var applyLaunchAtLogin: ((Bool) -> Bool)?
+    /// Opens System Settings at the Screen Recording pane (owned by the app, which also
+    /// shows the drag-and-drop helper when the permission is missing).
+    var openScreenRecordingSettings: (() -> Void)?
 
     private var screenshotCheckbox: NSButton!
     private var textCheckbox: NSButton!
     private var pathLabel: NSTextField!
     private var retentionPopup: NSPopUpButton!
     private var hotkeyRecorder: HotkeyRecorderView!
-    private var hotkeyConflictLabel: NSTextField!
-    private var hotkeyConflictRow: NSGridRow?
+    private var hotkeyToast: NSVisualEffectView!
+    private var hotkeyToastLabel: NSTextField!
+    private var hotkeyToastHideWork: DispatchWorkItem?
     private var launchCheckbox: NSButton!
     private var debugCheckbox: NSButton!
+
+    /// Toast container that never intercepts clicks aimed at the controls underneath it.
+    private final class PassthroughEffectView: NSVisualEffectView {
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    }
 
     private let retentionOptions: [(title: String, days: Int)] = [
         ("끄기", 0), ("1일", 1), ("7일", 7), ("30일", 30)
@@ -86,19 +95,29 @@ final class SettingsWindowController: NSWindowController {
             self?.handleHotkeyCapture(candidate) ?? false
         }
         hotkeyRecorder.onRecordingStateChanged = { [weak self] recording in
-            self?.setHotkeySuspended?(recording)
+            guard let self else { return }
+            self.setHotkeySuspended?(recording)
             if recording {
-                self?.setHotkeyConflictMessage(nil)
+                self.hideHotkeyToast()
             }
         }
-
-        hotkeyConflictLabel = NSTextField(labelWithString: "")
-        hotkeyConflictLabel.font = .systemFont(ofSize: 11)
-        hotkeyConflictLabel.textColor = .systemRed
+        hotkeyRecorder.onConsumedShortcutDetected = { [weak self] in
+            self?.showHotkeyToast(
+                "키 입력이 감지되지 않았습니다 — 시스템 또는 다른 앱이 사용 중인 단축키일 수 있습니다.",
+                color: .systemOrange
+            )
+        }
 
         launchCheckbox = NSButton(checkboxWithTitle: "컴퓨터 시작 시 자동 실행", target: self, action: #selector(toggleLaunchAtLogin))
 
         debugCheckbox = NSButton(checkboxWithTitle: "진행 상황 팝업 표시 (단계별 소요 시간)", target: self, action: #selector(toggleDebug))
+
+        let screenRecordingButton = NSButton(
+            title: "화면 기록 설정 열기…",
+            target: self,
+            action: #selector(openScreenRecording)
+        )
+        screenRecordingButton.bezelStyle = .rounded
 
         let grid = NSGridView(views: [
             [makeCaption("저장 항목"), wrap(screenshotCheckbox)],
@@ -106,9 +125,9 @@ final class SettingsWindowController: NSWindowController {
             [makeCaption("저장 위치"), pathRow],
             [makeCaption("자동 정리"), labeled(retentionPopup, suffix: "이 지나면 삭제")],
             [makeCaption("캡처 단축키"), wrap(hotkeyRecorder)],
-            [NSGridCell.emptyContentView, hotkeyConflictLabel],
             [makeCaption("시작 프로그램"), wrap(launchCheckbox)],
-            [makeCaption("디버깅"), wrap(debugCheckbox)]
+            [makeCaption("디버깅"), wrap(debugCheckbox)],
+            [makeCaption("권한"), wrap(screenRecordingButton)]
         ])
         grid.translatesAutoresizingMaskIntoConstraints = false
         grid.rowAlignment = .firstBaseline
@@ -117,10 +136,6 @@ final class SettingsWindowController: NSWindowController {
         grid.column(at: 0).xPlacement = .trailing
         grid.column(at: 1).xPlacement = .leading
 
-        // The conflict message row is collapsed until a rejected combo needs explaining.
-        hotkeyConflictRow = grid.cell(for: hotkeyConflictLabel)?.row
-        hotkeyConflictRow?.isHidden = true
-
         let container = NSView()
         container.addSubview(grid)
         NSLayoutConstraint.activate([
@@ -128,6 +143,35 @@ final class SettingsWindowController: NSWindowController {
             grid.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor, constant: -24),
             grid.topAnchor.constraint(equalTo: container.topAnchor, constant: 24),
             grid.bottomAnchor.constraint(lessThanOrEqualTo: container.bottomAnchor, constant: -24)
+        ])
+
+        // Bottom toast overlay: floats above the form, so showing a message never changes layout.
+        hotkeyToastLabel = NSTextField(wrappingLabelWithString: "")
+        hotkeyToastLabel.font = .systemFont(ofSize: 11, weight: .medium)
+        hotkeyToastLabel.alignment = .center
+        hotkeyToastLabel.isSelectable = false
+        hotkeyToastLabel.maximumNumberOfLines = 2
+        hotkeyToastLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        hotkeyToast = PassthroughEffectView()
+        hotkeyToast.material = .hudWindow
+        hotkeyToast.blendingMode = .withinWindow
+        hotkeyToast.state = .active
+        hotkeyToast.wantsLayer = true
+        hotkeyToast.layer?.cornerRadius = 8
+        hotkeyToast.layer?.masksToBounds = true
+        hotkeyToast.translatesAutoresizingMaskIntoConstraints = false
+        hotkeyToast.alphaValue = 0
+        hotkeyToast.addSubview(hotkeyToastLabel)
+        container.addSubview(hotkeyToast)
+        NSLayoutConstraint.activate([
+            hotkeyToastLabel.leadingAnchor.constraint(equalTo: hotkeyToast.leadingAnchor, constant: 12),
+            hotkeyToastLabel.trailingAnchor.constraint(equalTo: hotkeyToast.trailingAnchor, constant: -12),
+            hotkeyToastLabel.topAnchor.constraint(equalTo: hotkeyToast.topAnchor, constant: 7),
+            hotkeyToastLabel.bottomAnchor.constraint(equalTo: hotkeyToast.bottomAnchor, constant: -7),
+            hotkeyToast.centerXAnchor.constraint(equalTo: container.centerXAnchor),
+            hotkeyToast.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -12),
+            hotkeyToast.widthAnchor.constraint(lessThanOrEqualToConstant: 420)
         ])
         return container
     }
@@ -179,6 +223,10 @@ final class SettingsWindowController: NSWindowController {
         store.update { $0.saveTextResults = (textCheckbox.state == .on) }
     }
 
+    @objc private func openScreenRecording() {
+        openScreenRecordingSettings?()
+    }
+
     @objc private func toggleDebug() {
         store.update { $0.showDebugProgress = (debugCheckbox.state == .on) }
     }
@@ -228,22 +276,42 @@ final class SettingsWindowController: NSWindowController {
     /// that silently never fires.
     private func handleHotkeyCapture(_ candidate: HotkeyConfig) -> Bool {
         guard !Self.isClaimedBySystem(candidate) else {
-            setHotkeyConflictMessage("\(candidate.displayString) 은(는) macOS 시스템 단축키라 지정할 수 없습니다.")
+            showHotkeyToast("\(candidate.displayString) 은(는) macOS 시스템 단축키라 지정할 수 없습니다.", color: .systemRed)
             return false
         }
         guard applyHotkey?(candidate) ?? false else {
-            setHotkeyConflictMessage("\(candidate.displayString) 은(는) 다른 앱에서 이미 사용 중이라 지정할 수 없습니다.")
+            showHotkeyToast("\(candidate.displayString) 은(는) 다른 앱에서 이미 사용 중이라 지정할 수 없습니다.", color: .systemRed)
             return false
         }
-        setHotkeyConflictMessage(nil)
+        hideHotkeyToast()
         store.update { $0.hotkey = candidate }
         return true
     }
 
-    /// Shows the red message under the recorder, or collapses the row when `nil`.
-    private func setHotkeyConflictMessage(_ message: String?) {
-        hotkeyConflictLabel.stringValue = message ?? ""
-        hotkeyConflictRow?.isHidden = (message == nil)
+    /// Fades the toast in at the bottom of the window and auto-dismisses it. Red = definite
+    /// rejection; orange = heuristic warning (may be a bare modifier tap).
+    private func showHotkeyToast(_ message: String, color: NSColor) {
+        hotkeyToastLabel.stringValue = message
+        hotkeyToastLabel.textColor = color
+        hotkeyToastHideWork?.cancel()
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.15
+            hotkeyToast.animator().alphaValue = 1
+        }
+        let work = DispatchWorkItem { [weak self] in
+            self?.hideHotkeyToast()
+        }
+        hotkeyToastHideWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4, execute: work)
+    }
+
+    private func hideHotkeyToast() {
+        hotkeyToastHideWork?.cancel()
+        hotkeyToastHideWork = nil
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.2
+            hotkeyToast.animator().alphaValue = 0
+        }
     }
 
     /// Whether `candidate` matches an enabled macOS symbolic hotkey (Mission Control, screenshot
