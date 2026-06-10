@@ -10,6 +10,7 @@ which keeps the widest full-screen-width lines from piling onto one worker.
 """
 from __future__ import annotations
 
+import atexit
 import contextlib
 import multiprocessing as mp
 import os
@@ -37,8 +38,10 @@ def _default_workers() -> int:
     # 10 -> no further gain. The earlier "4 is best" result did not hold up under the
     # production-path benchmark (scripts/bench_stage.py); efficiency cores still help
     # because the LPT width split keeps the long crops on the fast workers.
+    # Capped at 6, not 8: each recognizer process holds ~508MB RSS of Paddle runtime, so
+    # 8 -> 6 returns ~1GB while only the dense case slows (~7%); medium/strip measured equal.
     cpu = os.cpu_count() or 4
-    return max(1, min(8, cpu - 2))
+    return max(1, min(6, cpu - 2))
 
 
 def create_detector(device: str = "cpu") -> Any:
@@ -72,6 +75,12 @@ def _rec_init(device: str) -> None:
     # processes, and intra-op threads only add contention here (measured slower).
     os.environ["OMP_NUM_THREADS"] = "1"
     threading.Thread(target=_watch_parent, args=(os.getppid(),), daemon=True).start()
+    # Exit instantly on the *normal* path too. Letting the interpreter finalize while the
+    # watchdog daemon thread sleeps in native code segfaulted (SIGSEGV in pythread teardown,
+    # observed as a macOS "Python quit unexpectedly" dialog on every app quit). atexit runs
+    # LIFO, so this fires before multiprocessing's own exit work; a throwaway compute child
+    # has nothing worth finalizing.
+    atexit.register(os._exit, 0)
     global _REC
     from paddlex import create_model
 
@@ -185,9 +194,21 @@ class RecognizerPool:
 
     def shutdown(self) -> None:
         """Hard-stop for worker exit (including SIGTERM): terminate children immediately
-        instead of draining outstanding work — the process is going away either way."""
-        try:
-            self._pool.terminate()
-            self._pool.join()
-        except Exception:  # noqa: BLE001 - exit path must never raise.
-            pass
+        instead of draining outstanding work — the process is going away either way.
+
+        Bounded, because mp.Pool.terminate can deadlock against idle workers (observed: a
+        worker wedged here for >18s on the stdin-EOF quit path, which kept the children's
+        parent alive and therefore their parent-watchdogs silent). If termination doesn't
+        finish in time we simply return — once this process exits, every child reaps itself
+        within ~2s via its watchdog."""
+
+        def _stop() -> None:
+            try:
+                self._pool.terminate()
+                self._pool.join()
+            except Exception:  # noqa: BLE001 - exit path must never raise.
+                pass
+
+        stopper = threading.Thread(target=_stop, daemon=True)
+        stopper.start()
+        stopper.join(timeout=3.0)

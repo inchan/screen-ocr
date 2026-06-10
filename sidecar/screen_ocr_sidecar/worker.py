@@ -209,12 +209,18 @@ def main() -> int:
         ),
         flush=True,
     )
+    code = 1
     try:
-        return serve(sys.stdin, sys.stdout, ocr)
+        code = serve(sys.stdin, sys.stdout, ocr)
     finally:
         # Runs on stdin EOF (client exited), SIGTERM/SIGINT (via the handlers above), and
-        # any crash — the recognizer children must never outlive the worker.
+        # any crash — the recognizer children must never outlive the worker. After the
+        # bounded pool shutdown, leave via os._exit: finalizing this interpreter under
+        # Paddle's native threads risks the same teardown segfault the children had, and a
+        # prompt parent death is what arms the children's watchdogs anyway. All responses
+        # are flushed line-by-line, so skipping interpreter cleanup loses nothing.
         ocr.rec_pool.shutdown()
+        os._exit(code if isinstance(code, int) else 0)
 
 
 if __name__ == "__main__":
