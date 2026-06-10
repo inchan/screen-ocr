@@ -905,7 +905,15 @@ public actor PersistentPythonSidecarOCR: OCRRecognizing {
         reader = nil
         ready = nil
         if let process, process.isRunning {
+            // SIGTERM first so the worker can shut its recognizer pool down (it installs a
+            // handler for exactly this); escalate to SIGKILL only if it is still around after
+            // a grace period — e.g. wedged inside a native Paddle kernel.
             process.terminate()
+            DispatchQueue.global().asyncAfter(deadline: .now() + 5) {
+                if process.isRunning {
+                    kill(process.processIdentifier, SIGKILL)
+                }
+            }
         }
         process = nil
     }

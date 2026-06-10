@@ -14,6 +14,8 @@ import contextlib
 import multiprocessing as mp
 import os
 import sys
+import threading
+import time
 from typing import Any
 
 import numpy as np
@@ -50,10 +52,26 @@ def create_detector(device: str = "cpu") -> Any:
 _REC: Any = None
 
 
+def _watch_parent(initial_ppid: int) -> None:
+    """Exits this recognizer process when its parent (the worker) dies.
+
+    Pool children block on the task queue, and every sibling holds the queue's write end,
+    so a dead parent never surfaces as EOF — without this watchdog, any worker death that
+    skips pool cleanup (SIGTERM's default handler, SIGKILL, a hard crash) strands all the
+    recognizer processes forever. That is exactly how "dozens of idle pythons" piled up in
+    Activity Monitor after repeated app restarts.
+    """
+    while True:
+        time.sleep(2.0)
+        if os.getppid() != initial_ppid:
+            os._exit(0)
+
+
 def _rec_init(device: str) -> None:
     # Pin each recognizer process to a single math thread; the parallelism is across
     # processes, and intra-op threads only add contention here (measured slower).
     os.environ["OMP_NUM_THREADS"] = "1"
+    threading.Thread(target=_watch_parent, args=(os.getppid(),), daemon=True).start()
     global _REC
     from paddlex import create_model
 
@@ -164,3 +182,12 @@ class RecognizerPool:
     def close(self) -> None:
         self._pool.close()
         self._pool.join()
+
+    def shutdown(self) -> None:
+        """Hard-stop for worker exit (including SIGTERM): terminate children immediately
+        instead of draining outstanding work — the process is going away either way."""
+        try:
+            self._pool.terminate()
+            self._pool.join()
+        except Exception:  # noqa: BLE001 - exit path must never raise.
+            pass

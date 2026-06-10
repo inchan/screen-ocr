@@ -4,6 +4,7 @@ import argparse
 import contextlib
 import json
 import os
+import signal
 import sys
 import time
 from collections.abc import Callable, Mapping
@@ -161,10 +162,24 @@ def serve(
     return 0
 
 
+def _install_signal_handlers() -> None:
+    """Turn SIGTERM/SIGINT into SystemExit so `finally` blocks run. Python's default SIGTERM
+    action kills the interpreter without atexit/multiprocessing cleanup, which strands the
+    recognizer pool's spawned children — the Swift client stops the worker with exactly that
+    signal (Process.terminate) on every timeout, error, restart, and shutdown."""
+
+    def _terminate(signum: int, _frame: Any) -> None:
+        raise SystemExit(128 + signum)
+
+    signal.signal(signal.SIGTERM, _terminate)
+    signal.signal(signal.SIGINT, _terminate)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run a persistent local PaddleOCR JSONL worker.")
     parser.parse_args()
 
+    _install_signal_handlers()
     started = time.perf_counter()
     try:
         ocr = load_ocr()
@@ -194,7 +209,12 @@ def main() -> int:
         ),
         flush=True,
     )
-    return serve(sys.stdin, sys.stdout, ocr)
+    try:
+        return serve(sys.stdin, sys.stdout, ocr)
+    finally:
+        # Runs on stdin EOF (client exited), SIGTERM/SIGINT (via the handlers above), and
+        # any crash — the recognizer children must never outlive the worker.
+        ocr.rec_pool.shutdown()
 
 
 if __name__ == "__main__":
