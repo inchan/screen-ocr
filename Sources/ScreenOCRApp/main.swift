@@ -974,6 +974,11 @@ final class ScreenOCRApp: NSObject, NSApplicationDelegate {
         return base.appendingPathComponent("Screen OCR", isDirectory: true)
     }
 
+    /// Persisted marker that CGRequestScreenCaptureAccess has been called at least once for
+    /// this user. macOS shows its own permission dialog only on the very first request; on
+    /// that attempt our alert would just stack a second, redundant "open Settings" popup.
+    private static let screenRecordingRequestedKey = "didRequestScreenRecordingAccess"
+
     private func ensureScreenCapturePermission() -> Bool {
         if CGPreflightScreenCaptureAccess() {
             return true
@@ -981,13 +986,23 @@ final class ScreenOCRApp: NSObject, NSApplicationDelegate {
 
         updateStatus("Screen Recording permission required")
         writeAppStatus(status: "screen_recording_permission_required", details: screenRecordingPermissionDetails())
+
+        let defaults = UserDefaults.standard
+        let systemPromptAlreadyShown = defaults.bool(forKey: Self.screenRecordingRequestedKey)
+        defaults.set(true, forKey: Self.screenRecordingRequestedKey)
+
         if CGRequestScreenCaptureAccess() {
             updateStatus("Screen Recording granted; try capture again")
             writeAppStatus(status: "screen_recording_permission_granted", details: screenRecordingPermissionDetails())
         } else {
             updateStatus("Enable Screen Recording in System Settings")
             writeAppStatus(status: "screen_recording_permission_denied", details: screenRecordingPermissionDetails())
-            showScreenRecordingPermissionAlert()
+            // First-ever request: the system dialog (with its own path to Settings) is on
+            // screen right now — adding ours would show two popups for one action. The
+            // system dialog never re-appears, so later attempts need our guidance.
+            if systemPromptAlreadyShown {
+                showScreenRecordingPermissionAlert()
+            }
         }
 
         return false
