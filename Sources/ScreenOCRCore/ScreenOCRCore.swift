@@ -214,28 +214,41 @@ public struct OCRStageProgress: Equatable, Sendable {
 }
 
 public enum OCRStageToast {
+    /// Column separator between a row's label and its duration. The app splits each line on this
+    /// tab and draws the label left-aligned and the duration right-aligned, so the columns line up
+    /// pixel-for-pixel regardless of how wide each Korean/Latin label renders — no space padding.
+    public static let columnSeparator = "\t"
+
     /// Renders the multi-line toast: a total line followed by one line per stage that has
     /// started — completed stages show their frozen duration, the active stage shows live
     /// elapsed time, and stages that have not begun yet are omitted so the list grows one row
     /// at a time. The total is the sum of all stage times (frozen + the active stage's live
     /// time). The first line is always the total; the app draws a divider beneath it.
+    ///
+    /// Each line is `"<icon> <label>\t<seconds>"`: the leading `icon label` is the left column,
+    /// and the part after the tab is the right (duration) column.
     public static func render(progress: OCRStageProgress, activeElapsedMs: Int) -> String {
         let activeMs = progress.active == nil ? 0 : max(0, activeElapsedMs)
         let totalMs = progress.completedMs.values.reduce(0, +) + activeMs
 
         let batch = progress.batchTotal > 1 ? " \(progress.batchIndex)/\(progress.batchTotal)" : ""
         let header = progress.isComplete ? "✅" : "⏳"
-        var lines = ["\(header) 전체\(batch) · \(seconds(totalMs))"]
 
+        var rows: [(icon: String, label: String, secs: String)] = [
+            (header, "전체\(batch)", seconds(totalMs))
+        ]
         for stage in OCRStage.allCases {
             if let ms = progress.completedMs[stage] {
-                lines.append("✓ \(stage.label) · \(seconds(ms))")
+                rows.append(("✓", stage.label, seconds(ms)))
             } else if progress.active == stage {
-                lines.append("▶ \(stage.label) · \(seconds(activeMs))")
+                rows.append(("▶", stage.label, seconds(activeMs)))
             }
             // Stages that have not started yet are not shown — the list appears one row at a time.
         }
-        return lines.joined(separator: "\n")
+
+        return rows
+            .map { "\($0.icon) \($0.label)\(columnSeparator)\($0.secs)" }
+            .joined(separator: "\n")
     }
 
     static func seconds(_ milliseconds: Int) -> String {
@@ -792,7 +805,9 @@ public actor PersistentPythonSidecarOCR: OCRRecognizing {
 
         if envelope.ok == false {
             throw PersistentPythonSidecarOCRError.workerReturnedError(
-                message: envelope.error ?? "Unknown OCR worker error"
+                message: envelope.error ?? "Unknown OCR worker error",
+                stage: envelope.stage,
+                traceback: envelope.traceback
             )
         }
 
@@ -1022,13 +1037,34 @@ private struct PersistentOCRWorkerReadyEnvelope: Decodable {
 private struct PersistentOCRWorkerResponseEnvelope: Decodable {
     let ok: Bool?
     let error: String?
+    let stage: String?
+    let traceback: String?
 }
 
-public enum PersistentPythonSidecarOCRError: Error, LocalizedError, Sendable {
+/// Structured detail carried by an OCR failure so callers can attribute it to a pipeline stage
+/// and recover the full diagnostic (e.g. a Python traceback) for logs without surfacing it to
+/// the user.
+public struct OCRFailureDetail: Sendable, Equatable {
+    public let stage: String?
+    public let traceback: String?
+
+    public init(stage: String? = nil, traceback: String? = nil) {
+        self.stage = stage
+        self.traceback = traceback
+    }
+}
+
+/// A protocol every OCR error conforms to so the app layer can pull stage/traceback off any
+/// thrown error uniformly (worker errors, capture errors, …) for error tracking.
+public protocol OCRDiagnosable {
+    var failureDetail: OCRFailureDetail { get }
+}
+
+public enum PersistentPythonSidecarOCRError: Error, LocalizedError, Sendable, OCRDiagnosable {
     case startFailed(message: String)
     case workerUnavailable
     case writeFailed(message: String)
-    case workerReturnedError(message: String)
+    case workerReturnedError(message: String, stage: String? = nil, traceback: String? = nil)
     case unexpectedEOF
     case invalidJSON(message: String)
     case requestTimedOut(ms: Int)
@@ -1041,7 +1077,10 @@ public enum PersistentPythonSidecarOCRError: Error, LocalizedError, Sendable {
             return "Persistent OCR worker is unavailable"
         case .writeFailed(let message):
             return "Persistent OCR worker request write failed: \(message)"
-        case .workerReturnedError(let message):
+        case .workerReturnedError(let message, let stage, _):
+            if let stage {
+                return "Persistent OCR worker failed at \(stage): \(message)"
+            }
             return "Persistent OCR worker returned an error: \(message)"
         case .unexpectedEOF:
             return "Persistent OCR worker closed its output unexpectedly"
@@ -1049,6 +1088,21 @@ public enum PersistentPythonSidecarOCRError: Error, LocalizedError, Sendable {
             return "Persistent OCR worker returned invalid JSON: \(message)"
         case .requestTimedOut(let ms):
             return "Persistent OCR worker timed out after \(ms) ms"
+        }
+    }
+
+    public var failureDetail: OCRFailureDetail {
+        switch self {
+        case .workerReturnedError(_, let stage, let traceback):
+            return OCRFailureDetail(stage: stage, traceback: traceback)
+        case .requestTimedOut:
+            return OCRFailureDetail(stage: "recognize")
+        case .unexpectedEOF:
+            return OCRFailureDetail(stage: "worker")
+        case .startFailed:
+            return OCRFailureDetail(stage: "worker_start")
+        default:
+            return OCRFailureDetail()
         }
     }
 }

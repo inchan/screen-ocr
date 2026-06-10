@@ -385,12 +385,16 @@ final class ScreenOCRCoreTests: XCTestCase {
 
         // Pending stages (clipboard) are omitted — only started/completed rows appear.
         XCTAssertEqual(lines.count, 5)
+        // Every row carries exactly one tab separating the left (label) and right (duration)
+        // columns; the app aligns the columns at draw time, so no space padding is emitted.
+        XCTAssertTrue(lines.allSatisfy { $0.filter { $0 == "\t" }.count == 1 })
+        XCTAssertFalse(message.contains("  "))
         // total = 40+11+30 + 12600 = 12681ms -> 12.68초
-        XCTAssertEqual(lines[0], "⏳ 전체 · 12.68초")
-        XCTAssertEqual(lines[1], "✓ 화면 캡처 · 0.04초")
-        XCTAssertEqual(lines[2], "✓ PNG 저장 · 0.01초")
-        XCTAssertEqual(lines[3], "✓ 전처리 · 0.03초")
-        XCTAssertEqual(lines[4], "▶ 검출+인식 · 12.60초")
+        XCTAssertEqual(lines[0], "⏳ 전체\t12.68초")
+        XCTAssertEqual(lines[1], "✓ 화면 캡처\t0.04초")
+        XCTAssertEqual(lines[2], "✓ PNG 저장\t0.01초")
+        XCTAssertEqual(lines[3], "✓ 전처리\t0.03초")
+        XCTAssertEqual(lines[4], "▶ 검출+인식\t12.60초")
     }
 
     func testOCRStageToastStartsWithJustTotalAndFirstStage() {
@@ -401,7 +405,8 @@ final class ScreenOCRCoreTests: XCTestCase {
         let lines = OCRStageToast.render(progress: progress, activeElapsedMs: 50)
             .split(separator: "\n").map(String.init)
         XCTAssertEqual(lines.count, 3) // total + 화면 캡처 + (active) PNG 저장
-        XCTAssertEqual(lines[2], "▶ PNG 저장 · 0.05초")
+        XCTAssertTrue(lines.allSatisfy { $0.filter { $0 == "\t" }.count == 1 })
+        XCTAssertEqual(lines[2], "▶ PNG 저장\t0.05초")
     }
 
     func testOCRStageToastMarksCompleteAndShowsBatchPosition() {
@@ -419,8 +424,10 @@ final class ScreenOCRCoreTests: XCTestCase {
         let lines = message.split(separator: "\n").map(String.init)
 
         XCTAssertTrue(progress.isComplete)
-        XCTAssertEqual(lines[0], "✅ 전체 2/3 · 17.58초") // 40+11+30+17500+1 = 17582ms
-        XCTAssertEqual(lines[5], "✓ 클립보드 복사 · 0.00초")
+        XCTAssertTrue(lines.allSatisfy { $0.filter { $0 == "\t" }.count == 1 })
+        // 40+11+30+17500+1 = 17582ms
+        XCTAssertEqual(lines[0], "✅ 전체 2/3\t17.58초")
+        XCTAssertEqual(lines[5], "✓ 클립보드 복사\t0.00초")
     }
 
     func testOCRStageMapsWorkerEvents() {

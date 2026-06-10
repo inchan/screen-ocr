@@ -15,12 +15,18 @@ final class SelectionOverlayController {
     }
 
     private func showOverlayWindows() {
+        // An accessory (LSUIElement) app is not active by default, so its overlay window can
+        // neither become key (no keyDown → Escape can't cancel) nor receive the first click as a
+        // selection (it would be swallowed to activate the app). Activate the app first so the
+        // borderless key-capable window below can take keyboard + first-mouse input.
+        NSApp.activate(ignoringOtherApps: true)
+
         windows = NSScreen.screens.map { screen in
             let view = SelectionOverlayView(screen: screen) { [weak self] result in
                 self?.finish(result)
             }
 
-            let window = NSWindow(
+            let window = OverlayWindow(
                 contentRect: screen.frame,
                 styleMask: .borderless,
                 backing: .buffered,
@@ -37,6 +43,8 @@ final class SelectionOverlayController {
             return window
         }
 
+        // Make the first overlay key so Escape and the first selection click are delivered.
+        windows.first?.makeKey()
         NSCursor.crosshair.set()
     }
 
@@ -59,11 +67,22 @@ final class SelectionOverlayController {
     }
 }
 
+/// A borderless window that can still become key/main. Plain borderless `NSWindow`s return
+/// `false` for both, which blocks keyDown (Escape-to-cancel) and first-click delivery.
+private final class OverlayWindow: NSWindow {
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { true }
+}
+
 private final class SelectionOverlayView: NSView {
     private let screen: NSScreen
     private let completion: (Result<ScreenRegionSelection, Error>) -> Void
     private var dragStart: CGPoint?
     private var dragCurrent: CGPoint?
+
+    // Register the first click even when the app was inactive when the overlay appeared
+    // (e.g. triggered by the global hotkey while another app was frontmost).
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     init(screen: NSScreen, completion: @escaping (Result<ScreenRegionSelection, Error>) -> Void) {
         self.screen = screen

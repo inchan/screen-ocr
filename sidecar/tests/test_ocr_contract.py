@@ -292,6 +292,12 @@ class FakeOCR:
             }
         ]
 
+    # Worker contract: handle_request now calls engine.recognize(); reuse the same
+    # fake predict through the single-process recognize_image path so the worker-level
+    # behavior (progress, min_score, slim lines) is exercised without spawning a pool.
+    def recognize(self, image_path, min_score=0.0):
+        return recognize_image(image_path, ocr_factory=lambda: self, min_score=min_score)
+
 
 class LowScoreOCR:
     def __init__(self):
@@ -309,6 +315,9 @@ class LowScoreOCR:
                 ],
             }
         ]
+
+    def recognize(self, image_path, min_score=0.0):
+        return recognize_image(image_path, ocr_factory=lambda: self, min_score=min_score)
 
 
 class ArrayLike:

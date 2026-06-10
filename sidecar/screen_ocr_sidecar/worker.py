@@ -9,13 +9,32 @@ import time
 from collections.abc import Callable, Mapping
 from typing import Any, TextIO
 
-from screen_ocr_sidecar.ocr import create_default_ocr, recognize_image
+from screen_ocr_sidecar.ocr import recognize_image_parallel
+from screen_ocr_sidecar.parallel_rec import RecognizerPool, create_detector
 from screen_ocr_sidecar.preprocess import preprocess_image_for_ocr, skip_preprocessing
 
 
-def load_ocr() -> Any:
+class OCREngine:
+    """Holds the single-process detector and the warmed recognition process pool."""
+
+    def __init__(self, detector: Any, rec_pool: Any) -> None:
+        self.detector = detector
+        self.rec_pool = rec_pool
+
+    def recognize(self, image_path: str, min_score: float = 0.0) -> dict[str, Any]:
+        return recognize_image_parallel(
+            image_path,
+            detector=self.detector,
+            rec_pool=self.rec_pool,
+            min_score=min_score,
+        )
+
+
+def load_ocr() -> OCREngine:
     with contextlib.redirect_stdout(sys.stderr):
-        return create_default_ocr()
+        detector = create_detector()
+        rec_pool = RecognizerPool()
+    return OCREngine(detector, rec_pool)
 
 
 def _min_line_score() -> float:
@@ -41,25 +60,40 @@ def handle_request(
             "id": request_id,
             "ok": False,
             "error": "Worker request is missing image_path",
+            "stage": "validate",
         }
 
     def emit(stage: str) -> None:
         if on_progress is not None:
             on_progress(stage)
 
+    # Track which pipeline stage is active so a failure is attributable (not just "OCR failed").
+    stage = "preprocess"
     started = time.perf_counter()
-    with contextlib.redirect_stdout(sys.stderr):
-        emit("preprocess")
-        if payload.get("preprocess", True) is False:
-            preprocess_result = skip_preprocessing(str(image_path))
-        else:
-            preprocess_result = preprocess_image_for_ocr(str(image_path))
-        emit("recognize")
-        document = recognize_image(
-            preprocess_result.ocr_image_path,
-            ocr_factory=lambda: ocr,
-            min_score=_min_line_score(),
-        )
+    try:
+        with contextlib.redirect_stdout(sys.stderr):
+            emit("preprocess")
+            if payload.get("preprocess", True) is False:
+                preprocess_result = skip_preprocessing(str(image_path))
+            else:
+                preprocess_result = preprocess_image_for_ocr(str(image_path))
+            stage = "recognize"
+            emit("recognize")
+            document = ocr.recognize(
+                preprocess_result.ocr_image_path,
+                min_score=_min_line_score(),
+            )
+    except Exception as error:  # noqa: BLE001 - failures must be attributable + reproducible.
+        import traceback
+
+        return {
+            "id": request_id,
+            "ok": False,
+            "error": str(error) or error.__class__.__name__,
+            "stage": stage,
+            "image_path": str(image_path),
+            "traceback": traceback.format_exc(),
+        }
 
     # The Swift client only consumes text + score; drop box polygons to slim the wire payload.
     document["lines"] = [
@@ -112,10 +146,14 @@ def serve(
                     "error": "Worker request must be a JSON object",
                 }
         except Exception as error:  # noqa: BLE001 - worker must return structured errors.
+            import traceback
+
             response = {
                 "id": request_id,
                 "ok": False,
-                "error": str(error),
+                "error": str(error) or error.__class__.__name__,
+                "stage": "request",
+                "traceback": traceback.format_exc(),
             }
 
         print(json.dumps(response, ensure_ascii=False), file=stdout, flush=True)

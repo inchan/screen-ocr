@@ -3,6 +3,7 @@ import Carbon.HIToolbox
 import CoreGraphics
 import Foundation
 import ScreenOCRCore
+import ServiceManagement
 
 @MainActor
 final class ScreenOCRApp: NSObject, NSApplicationDelegate {
@@ -10,6 +11,9 @@ final class ScreenOCRApp: NSObject, NSApplicationDelegate {
     private var statusMenuItem: NSMenuItem?
     private var hotKeyRef: EventHotKeyRef?
     private var hotKeyEventHandler: EventHandlerRef?
+    private let settingsStore = SettingsStore()
+    private var settingsWindowController: SettingsWindowController?
+    private var retentionTimer: Timer?
     private var lastScreenRecordingAlertDate: Date?
     private let selectionOverlay = SelectionOverlayController()
     private var persistentOCR: PersistentPythonSidecarOCR?
@@ -35,16 +39,23 @@ final class ScreenOCRApp: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         configureStatusItem()
-        registerHotKey()
+        installHotKeyHandler()
+        _ = applyHotkey(settingsStore.settings.hotkey)
+        syncLaunchAtLoginState()
+        startRetentionSweep()
         prewarmOCRWorkerAtLaunch()
         if ProcessInfo.processInfo.environment["SCREEN_OCR_RUN_FIXTURE_ON_LAUNCH"] == "1" {
             Task {
                 await runFixtureOCRFlow()
             }
         }
+        if ProcessInfo.processInfo.environment["SCREEN_OCR_OPEN_SETTINGS_ON_LAUNCH"] == "1" {
+            openSettings()
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        retentionTimer?.invalidate()
         if let hotKeyRef {
             UnregisterEventHotKey(hotKeyRef)
         }
@@ -55,7 +66,15 @@ final class ScreenOCRApp: NSObject, NSApplicationDelegate {
 
     private func configureStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        item.button?.title = "OCR"
+        if let button = item.button {
+            let icon = Self.makeMenuBarIcon()
+            button.image = icon
+            button.imagePosition = .imageOnly
+            button.toolTip = "Screen OCR"
+            if icon == nil {
+                button.title = "OCR"
+            }
+        }
 
         let menu = NSMenu()
         let status = NSMenuItem(title: "Starting...", action: nil, keyEquivalent: "")
@@ -64,7 +83,7 @@ final class ScreenOCRApp: NSObject, NSApplicationDelegate {
         menu.addItem(status)
         menu.addItem(NSMenuItem.separator())
         menu.addItem(makeMenuItem(title: "Capture OCR", action: #selector(runScreenOCR)))
-        menu.addItem(makeMenuItem(title: "OCR Fixture", action: #selector(runFixtureOCR)))
+        menu.addItem(makeMenuItem(title: "Settings…", action: #selector(openSettings), keyEquivalent: ","))
         menu.addItem(makeMenuItem(title: "Open Screen Recording Settings", action: #selector(openScreenRecordingSettings)))
         menu.addItem(makeMenuItem(title: "Quit", action: #selector(quit), keyEquivalent: "q"))
 
@@ -73,13 +92,53 @@ final class ScreenOCRApp: NSObject, NSApplicationDelegate {
         updateStatus("Ready")
     }
 
+    /// Menu bar icon — 심플 07: viewfinder brackets + center dot, rendered as a
+    /// template image so it tracks the menu bar's light/dark appearance.
+    private static func makeMenuBarIcon() -> NSImage? {
+        let size = NSSize(width: 18, height: 18)
+        let image = NSImage(size: size, flipped: false) { rect in
+            let line: CGFloat = 1.6
+            let inset = line / 2
+            let arm: CGFloat = 4.5      // bracket arm length
+            let lo = inset + 1.0
+            let hi = rect.width - inset - 1.0
+
+            let brackets = NSBezierPath()
+            brackets.lineWidth = line
+            brackets.lineCapStyle = .round
+            brackets.lineJoinStyle = .round
+            // top-left
+            brackets.move(to: NSPoint(x: lo, y: hi - arm)); brackets.line(to: NSPoint(x: lo, y: hi)); brackets.line(to: NSPoint(x: lo + arm, y: hi))
+            // top-right
+            brackets.move(to: NSPoint(x: hi - arm, y: hi)); brackets.line(to: NSPoint(x: hi, y: hi)); brackets.line(to: NSPoint(x: hi, y: hi - arm))
+            // bottom-left
+            brackets.move(to: NSPoint(x: lo, y: lo + arm)); brackets.line(to: NSPoint(x: lo, y: lo)); brackets.line(to: NSPoint(x: lo + arm, y: lo))
+            // bottom-right
+            brackets.move(to: NSPoint(x: hi - arm, y: lo)); brackets.line(to: NSPoint(x: hi, y: lo)); brackets.line(to: NSPoint(x: hi, y: lo + arm))
+            NSColor.black.setStroke()
+            brackets.stroke()
+
+            // center dot
+            let r: CGFloat = 1.9
+            let c = NSPoint(x: rect.midX, y: rect.midY)
+            let dot = NSBezierPath(ovalIn: NSRect(x: c.x - r, y: c.y - r, width: r * 2, height: r * 2))
+            NSColor.black.setFill()
+            dot.fill()
+            return true
+        }
+        image.isTemplate = true
+        return image
+    }
+
     private func makeMenuItem(title: String, action: Selector, keyEquivalent: String = "") -> NSMenuItem {
         let item = NSMenuItem(title: title, action: action, keyEquivalent: keyEquivalent)
         item.target = self
         return item
     }
 
-    private func registerHotKey() {
+    /// Installs the Carbon hotkey event handler once. The actual key combination is registered
+    /// separately by `applyHotkey(_:)` so it can change at runtime from the settings window.
+    private func installHotKeyHandler() {
         var eventType = EventTypeSpec(
             eventClass: OSType(kEventClassKeyboard),
             eventKind: UInt32(kEventHotKeyPressed)
@@ -104,19 +163,30 @@ final class ScreenOCRApp: NSObject, NSApplicationDelegate {
             &hotKeyEventHandler
         )
 
-        guard installStatus == noErr else {
+        if installStatus != noErr {
             updateStatus("Hotkey handler unavailable: \(installStatus)")
             writeAppStatus(
                 status: "hotkey_handler_unavailable",
                 details: ["install_status": "\(installStatus)"]
             )
-            return
+        }
+    }
+
+    /// Registers `config` as the global capture hotkey, replacing any previously registered combo.
+    /// Returns `false` if the OS refused it (e.g. the combination is already claimed elsewhere),
+    /// in which case the previous registration has already been torn down — callers that need to
+    /// keep the old shortcut should re-apply it.
+    @discardableResult
+    private func applyHotkey(_ config: HotkeyConfig) -> Bool {
+        if let existing = hotKeyRef {
+            UnregisterEventHotKey(existing)
+            hotKeyRef = nil
         }
 
         let hotKeyID = EventHotKeyID(signature: OSType(0x534F4352), id: 1)
         let registerStatus = RegisterEventHotKey(
-            UInt32(kVK_ANSI_0),
-            UInt32(cmdKey | shiftKey),
+            config.keyCode,
+            config.modifiers,
             hotKeyID,
             GetApplicationEventTarget(),
             0,
@@ -124,14 +194,17 @@ final class ScreenOCRApp: NSObject, NSApplicationDelegate {
         )
 
         if registerStatus == noErr {
-            updateStatus("Ready - Cmd+Shift+0")
-            writeAppStatus(status: "hotkey_registered", details: ["shortcut": "Cmd+Shift+0"])
+            updateStatus("Ready - \(config.displayString)")
+            writeAppStatus(status: "hotkey_registered", details: ["shortcut": config.displayString])
+            return true
         } else {
-            updateStatus("Cmd+Shift+0 unavailable: \(registerStatus)")
+            hotKeyRef = nil
+            updateStatus("\(config.displayString) unavailable: \(registerStatus)")
             writeAppStatus(
                 status: "hotkey_unavailable",
-                details: ["register_status": "\(registerStatus)", "shortcut": "Cmd+Shift+0"]
+                details: ["register_status": "\(registerStatus)", "shortcut": config.displayString]
             )
+            return false
         }
     }
 
@@ -259,12 +332,134 @@ final class ScreenOCRApp: NSObject, NSApplicationDelegate {
             finishOCRJob(report: report, job: job, elapsed: elapsed, debugResult: debugResult)
         } catch {
             stopProgressTimer()
-            updateStatus("OCR failed: \(error.localizedDescription)")
-            showTerminalToast(OCRProgressToast.failed(reason: error.localizedDescription))
-            writeAppStatus(
-                status: job.isFixture ? "fixture_ocr_error" : "capture_ocr_error",
-                details: ["error": error.localizedDescription]
+            activeStageStartedAt = nil
+            recordOCRFailure(error: error, job: job)
+        }
+    }
+
+    /// Central error sink: attributes a failure to a pipeline stage, shows a concise toast, and
+    /// persists the full detail (app status + an append-only error log + a per-run error
+    /// manifest) so any failure is later reproducible from its run id, stage, and traceback.
+    private func recordOCRFailure(error: Error, job: OCRJob) {
+        let detail = (error as? OCRDiagnosable)?.failureDetail ?? OCRFailureDetail()
+        let stage = detail.stage ?? "unknown"
+        let label = Self.stageLabel(stage)
+        let summary = Self.firstLine(error.localizedDescription)
+        let runID = job.image.id
+
+        updateStatus("OCR \(label) 실패: \(summary)")
+        showTerminalToast("❌ \(label) 실패 · \(summary)")
+
+        let message = error.localizedDescription
+        var details: [String: String] = ["error": message, "stage": stage, "run_id": runID]
+        if let imagePath = job.image.filePath {
+            details["image_path"] = imagePath
+        }
+        if detail.traceback != nil {
+            details["traceback_captured"] = "1"
+        }
+        writeAppStatus(
+            status: job.isFixture ? "fixture_ocr_error" : "capture_ocr_error",
+            details: details
+        )
+
+        persistFailure(
+            runID: runID,
+            stage: stage,
+            message: message,
+            traceback: detail.traceback,
+            imagePath: job.image.filePath,
+            paths: job.paths
+        )
+    }
+
+    /// Korean label for a pipeline stage id. Delegates to OCRStage.label for the stages that map
+    /// to an OCRStage case; the rest are worker/app-only stage ids without an OCRStage.
+    private static func stageLabel(_ stage: String) -> String {
+        if let known = OCRStage(rawValue: stage) {
+            return known.label
+        }
+        switch stage {
+        case "capture": return "화면 캡처"
+        case "validate": return "입력 검증"
+        case "request": return "요청 처리"
+        case "worker", "worker_start": return "OCR 워커"
+        default: return "OCR"
+        }
+    }
+
+    private static func firstLine(_ text: String, limit: Int = 120) -> String {
+        let line = text.split(separator: "\n", maxSplits: 1).first.map(String.init) ?? text
+        return line.count > limit ? String(line.prefix(limit)) + "…" : line
+    }
+
+    private static let isoFormatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter
+    }()
+
+    /// Persists a failure to both the append-only error history (artifacts/errors.log) and a
+    /// per-run error manifest (debug-runs/<run-id>.error.json) under one shared timestamp, so a
+    /// failed capture leaves the same kind of reproducible artifact as a good run. Best-effort:
+    /// write failures are reported to app status, never thrown.
+    private func persistFailure(
+        runID: String,
+        stage: String,
+        message: String,
+        traceback: String?,
+        imagePath: String?,
+        paths: AppRuntimePaths
+    ) {
+        let timestamp = Self.isoFormatter.string(from: Date())
+
+        var entry = "[\(timestamp)] run=\(runID) stage=\(stage) error=\(Self.firstLine(message, limit: 500))"
+        if let imagePath { entry += " image=\(imagePath)" }
+        entry += "\n"
+        if let traceback, !traceback.isEmpty {
+            entry += traceback
+                .split(separator: "\n", omittingEmptySubsequences: false)
+                .map { "    \($0)" }
+                .joined(separator: "\n") + "\n"
+        }
+        let logURL = paths.artifactsRoot.appendingPathComponent("errors.log")
+        do {
+            try FileManager.default.createDirectory(
+                at: paths.artifactsRoot, withIntermediateDirectories: true
             )
+            if let data = entry.data(using: .utf8) {
+                if let handle = try? FileHandle(forWritingTo: logURL) {
+                    defer { try? handle.close() }
+                    try handle.seekToEnd()
+                    try handle.write(contentsOf: data)
+                } else {
+                    try data.write(to: logURL)
+                }
+            }
+        } catch {
+            writeAppStatus(status: "error_log_write_failed", details: ["error": error.localizedDescription])
+        }
+
+        var manifest: [String: Any] = [
+            "run_id": runID,
+            "ok": false,
+            "stage": stage,
+            "error_message": message,
+            "created_at": timestamp
+        ]
+        if let imagePath { manifest["image_path"] = imagePath }
+        if let traceback { manifest["traceback"] = traceback }
+        let manifestURL = paths.debugOutputDirectory.appendingPathComponent("\(runID).error.json")
+        do {
+            try FileManager.default.createDirectory(
+                at: paths.debugOutputDirectory, withIntermediateDirectories: true
+            )
+            let data = try JSONSerialization.data(
+                withJSONObject: manifest, options: [.prettyPrinted, .sortedKeys]
+            )
+            try data.write(to: manifestURL)
+        } catch {
+            writeAppStatus(status: "error_manifest_write_failed", details: ["error": error.localizedDescription])
         }
     }
 
@@ -293,7 +488,18 @@ final class ScreenOCRApp: NSObject, NSApplicationDelegate {
             stageProgress = finalStageProgress(from: report)
             activeStageStartedAt = nil
             updateStatus("Copied \(report.lineCount) OCR lines")
-            showStageToast(sticky: false)
+            if debugProgressEnabled {
+                // Debug mode: the final per-stage breakdown.
+                showStageToast(sticky: false)
+            } else {
+                // Default: a single-line completion confirmation.
+                showTerminalToast(OCRProgressToast.copied(
+                    index: batchProgress.currentIndex,
+                    total: batchProgress.total,
+                    elapsed: elapsed
+                ))
+            }
+            persistUserArtifacts(report: report)
         case .failed(let stage):
             updateStatus("OCR \(stage.diagnosticValue) failed")
             showTerminalToast(OCRProgressToast.failed(reason: stage.diagnosticValue))
@@ -339,7 +545,15 @@ final class ScreenOCRApp: NSObject, NSApplicationDelegate {
 
     // MARK: - Live progress toast
 
+    /// Whether the step-by-step progress popup should appear. Off by default; users opt in via the
+    /// 디버깅 toggle in settings. When off, only a single-line completion/failure toast is shown.
+    private var debugProgressEnabled: Bool {
+        settingsStore.settings.showDebugProgress
+    }
+
     private func startProgressTimer() {
+        // Without the debug toggle there is no live progress popup — skip the ticking entirely.
+        guard debugProgressEnabled else { return }
         progressTimerTask?.cancel()
         showStageToast(sticky: true)
         progressTimerTask = Task { [weak self] in
@@ -428,6 +642,171 @@ final class ScreenOCRApp: NSObject, NSApplicationDelegate {
     @objc private func quit() {
         NSApp.terminate(nil)
     }
+
+    @objc private func openSettings() {
+        if settingsWindowController == nil {
+            let controller = SettingsWindowController(store: settingsStore)
+            controller.applyHotkey = { [weak self] candidate in
+                self?.applyHotkeyWithRevert(candidate) ?? false
+            }
+            controller.applyLaunchAtLogin = { [weak self] enabled in
+                self?.applyLaunchAtLogin(enabled) ?? false
+            }
+            settingsWindowController = controller
+        }
+        settingsWindowController?.present()
+    }
+
+    /// Applies a new hotkey, restoring the previously registered combo if the new one is rejected.
+    private func applyHotkeyWithRevert(_ candidate: HotkeyConfig) -> Bool {
+        let previous = settingsStore.settings.hotkey
+        if applyHotkey(candidate) {
+            return true
+        }
+        // Rejected: the candidate registration failed, so put the old shortcut back.
+        _ = applyHotkey(previous)
+        return false
+    }
+
+    // MARK: - Launch at login
+
+    /// Registers/unregisters the app as a login item via SMAppService. Returns `false` (and shows
+    /// an alert) if the system call fails — common in unsigned/dev builds — so the settings toggle
+    /// can revert.
+    private func applyLaunchAtLogin(_ enabled: Bool) -> Bool {
+        let service = SMAppService.mainApp
+        do {
+            if enabled {
+                if service.status != .enabled {
+                    try service.register()
+                }
+            } else {
+                if service.status == .enabled {
+                    try service.unregister()
+                }
+            }
+            writeAppStatus(status: "launch_at_login_updated", details: ["enabled": enabled ? "1" : "0"])
+            return true
+        } catch {
+            let alert = NSAlert()
+            alert.messageText = "자동 실행 설정을 변경할 수 없습니다"
+            alert.informativeText = "로그인 항목 등록에 실패했습니다. 앱이 서명되어 /Applications 에 설치되어 있어야 합니다.\n\n\(error.localizedDescription)"
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "확인")
+            alert.runModal()
+            writeAppStatus(status: "launch_at_login_failed", details: ["enabled": enabled ? "1" : "0", "error": error.localizedDescription])
+            return false
+        }
+    }
+
+    /// Reconciles the persisted launch-at-login preference with the actual SMAppService state at
+    /// launch (the user may have toggled the login item in System Settings while the app was off).
+    private func syncLaunchAtLoginState() {
+        let actuallyEnabled = (SMAppService.mainApp.status == .enabled)
+        if actuallyEnabled != settingsStore.settings.launchAtLogin {
+            settingsStore.update { $0.launchAtLogin = actuallyEnabled }
+        }
+    }
+
+    // MARK: - Retention sweep
+
+    /// Runs an immediate retention sweep at launch, then schedules an hourly sweep so long-running
+    /// sessions still clean up files that age past the retention window.
+    private func startRetentionSweep() {
+        runRetentionSweep()
+        retentionTimer?.invalidate()
+        let timer = Timer(timeInterval: 3600, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.runRetentionSweep() }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        retentionTimer = timer
+    }
+
+    /// Deletes saved screenshots/text results older than the configured retention window.
+    /// Retention of 0 disables cleanup. Best-effort: per-file failures are skipped.
+    private func runRetentionSweep() {
+        let settings = settingsStore.settings
+        guard settings.retentionDays > 0 else { return }
+        let directory = settings.saveDirectoryURL
+        let cutoff = Date().addingTimeInterval(-Double(settings.retentionDays) * 86_400)
+
+        let fm = FileManager.default
+        guard let entries = try? fm.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: [.contentModificationDateKey, .isRegularFileKey],
+            options: [.skipsHiddenFiles]
+        ) else { return }
+
+        var deleted = 0
+        for url in entries {
+            let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .isRegularFileKey])
+            guard values?.isRegularFile == true,
+                  let modified = values?.contentModificationDate,
+                  modified < cutoff else { continue }
+            if (try? fm.removeItem(at: url)) != nil {
+                deleted += 1
+            }
+        }
+
+        if deleted > 0 {
+            writeAppStatus(
+                status: "retention_sweep",
+                details: ["deleted": "\(deleted)", "retention_days": "\(settings.retentionDays)"]
+            )
+        }
+    }
+
+    /// Persists the captured screenshot and/or recognized text into the user's save directory,
+    /// gated by the current settings. Best-effort; failures are recorded to app status only.
+    private func persistUserArtifacts(report: ScreenOCRRunReport) {
+        let settings = settingsStore.settings
+        guard settings.saveScreenshots || settings.saveTextResults else { return }
+        guard report.status == .copiedText else { return }
+
+        let fm = FileManager.default
+        let directory = settings.saveDirectoryURL
+        do {
+            try fm.createDirectory(at: directory, withIntermediateDirectories: true)
+        } catch {
+            writeAppStatus(status: "user_save_dir_failed", details: ["error": error.localizedDescription])
+            return
+        }
+
+        // Shared timestamped basename so a screenshot and its text pair up.
+        let stamp = Self.fileStampFormatter.string(from: Date())
+        let base = "screen-ocr-\(stamp)"
+
+        if settings.saveScreenshots, let sourcePath = report.capturedImagePath {
+            let destination = directory.appendingPathComponent("\(base).png")
+            do {
+                if fm.fileExists(atPath: destination.path) {
+                    try fm.removeItem(at: destination)
+                }
+                try fm.copyItem(at: URL(fileURLWithPath: sourcePath), to: destination)
+                // copyItem preserves the source's modification date; stamp it to "now" so the
+                // retention sweep measures time-since-saved rather than the original capture time.
+                try? fm.setAttributes([.modificationDate: Date()], ofItemAtPath: destination.path)
+            } catch {
+                writeAppStatus(status: "user_save_image_failed", details: ["error": error.localizedDescription])
+            }
+        }
+
+        if settings.saveTextResults, !report.recognizedText.isEmpty {
+            let destination = directory.appendingPathComponent("\(base).txt")
+            do {
+                try report.recognizedText.write(to: destination, atomically: true, encoding: .utf8)
+            } catch {
+                writeAppStatus(status: "user_save_text_failed", details: ["error": error.localizedDescription])
+            }
+        }
+    }
+
+    private static let fileStampFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyyMMdd-HHmmss-SSS"
+        return formatter
+    }()
 
     @objc private func openScreenRecordingSettings() {
         let urls = [
@@ -612,7 +991,7 @@ final class ScreenOCRApp: NSObject, NSApplicationDelegate {
                 withIntermediateDirectories: true
             )
             var payload: [String: Any] = [
-                "created_at": ISO8601DateFormatter().string(from: Date()),
+                "created_at": Self.isoFormatter.string(from: Date()),
                 "status": status
             ]
             for (key, value) in details {
@@ -747,21 +1126,11 @@ private struct StaticImageCapture: ImageCapturing {
 private final class CopyToastPresenter {
     private var window: NSWindow?
     private var closeTask: Task<Void, Never>?
-    private let toastWidth: CGFloat = 232
 
-    /// Sizes the toast to its content: single-line stays compact, the multi-line stage list
-    /// grows by line count and reserves room for the divider under the total row.
+    /// Sizes the toast to its content: width hugs the longest row (clamped to a sane range) and
+    /// height grows by line count, reserving room for the divider under the total row.
     private func toastSize(for message: String) -> CGSize {
-        let lineCount = max(1, message.split(separator: "\n", omittingEmptySubsequences: false).count)
-        if lineCount == 1 {
-            return CGSize(width: toastWidth, height: 44)
-        }
-        let height = ToastView.topInset
-            + ToastView.lineHeight                       // total row
-            + ToastView.dividerGap                       // divider under total
-            + CGFloat(lineCount - 1) * ToastView.lineHeight
-            + ToastView.bottomInset
-        return CGSize(width: toastWidth, height: height)
+        ToastView.preferredSize(for: message)
     }
 
     /// Shows a toast that dismisses itself after a short delay. Used for terminal states
@@ -834,7 +1203,7 @@ private final class CopyToastPresenter {
 
     private func makeWindow() -> NSWindow {
         let window = NSPanel(
-            contentRect: CGRect(origin: .zero, size: CGSize(width: toastWidth, height: 44)),
+            contentRect: CGRect(origin: .zero, size: CGSize(width: ToastView.maxWidth, height: 40)),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
@@ -850,18 +1219,25 @@ private final class CopyToastPresenter {
 }
 
 private final class ToastView: NSView {
-    static let topInset: CGFloat = 9
-    static let bottomInset: CGFloat = 9
-    static let lineHeight: CGFloat = 18
-    static let dividerGap: CGFloat = 9
+    static let topInset: CGFloat = 8
+    static let bottomInset: CGFloat = 8
+    static let lineHeight: CGFloat = 17
+    static let dividerGap: CGFloat = 8
     static let horizontalInset: CGFloat = 12
+    /// Minimum gap between the label column and the right-aligned duration column.
+    static let columnGap: CGFloat = 16
+    static let minWidth: CGFloat = 150
+    static let maxWidth: CGFloat = 240
+
+    static let multilineFont = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium)
+    static let singleLineFont = NSFont.systemFont(ofSize: 13, weight: .semibold)
 
     private let message: String
     private var isMultiline: Bool { message.contains("\n") }
 
     init(message: String) {
         self.message = message
-        super.init(frame: CGRect(origin: .zero, size: CGSize(width: 232, height: 44)))
+        super.init(frame: CGRect(origin: .zero, size: ToastView.preferredSize(for: message)))
         wantsLayer = true
         layer?.cornerRadius = 10
         layer?.backgroundColor = NSColor.windowBackgroundColor.withAlphaComponent(0.96).cgColor
@@ -876,6 +1252,53 @@ private final class ToastView: NSView {
     // Flip so multi-line layout reads top-to-bottom in the natural order.
     override var isFlipped: Bool { true }
 
+    /// Measures the toast. Single-line toasts hug their text; the multi-line stage toast is sized
+    /// to its *final* extent — every stage row plus the total — so the popup stays the same size
+    /// while the list fills in one row at a time and when it completes. Width is clamped to
+    /// [minWidth, maxWidth].
+    static func preferredSize(for message: String) -> CGSize {
+        guard message.contains("\n") else {
+            let width = textSize(message, font: singleLineFont).width + horizontalInset * 2
+            return CGSize(width: clampWidth(width), height: 40)
+        }
+        return stageToastSize
+    }
+
+    /// Fixed size of the step-by-step stage popup: the label column is sized to the widest stage
+    /// label, the duration column reserves a worst-case "00.00초", and the height reserves a row
+    /// per stage plus the total row — independent of how many rows are currently filled in.
+    static let stageToastSize: CGSize = {
+        // Left column is "<icon> <label>"; the icon glyphs are all roughly one cell, so measuring
+        // against the total row and every stage label with a representative mark covers the max.
+        var leftColumns = ["⏳ 전체"]
+        leftColumns.append(contentsOf: OCRStage.allCases.map { "✓ \($0.label)" })
+        let maxLabel = leftColumns.map { textSize($0, font: multilineFont).width }.max() ?? 0
+        let maxSecs = textSize("00.00초", font: multilineFont).width
+        let width = clampWidth(horizontalInset * 2 + maxLabel + columnGap + maxSecs)
+
+        let rowCount = OCRStage.allCases.count + 1 // stages + total
+        let height = topInset
+            + lineHeight                                 // total row
+            + dividerGap                                 // divider under total
+            + CGFloat(rowCount - 1) * lineHeight
+            + bottomInset
+        return CGSize(width: width, height: ceil(height))
+    }()
+
+    /// Splits a rendered line into its (label, duration) columns at the tab separator.
+    private static func columns(of line: String) -> (label: String, secs: String) {
+        let parts = line.components(separatedBy: OCRStageToast.columnSeparator)
+        return (parts.first ?? line, parts.count > 1 ? parts[1] : "")
+    }
+
+    private static func textSize(_ text: String, font: NSFont) -> CGSize {
+        (text as NSString).size(withAttributes: [.font: font])
+    }
+
+    private static func clampWidth(_ width: CGFloat) -> CGFloat {
+        min(maxWidth, max(minWidth, ceil(width)))
+    }
+
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
 
@@ -884,45 +1307,49 @@ private final class ToastView: NSView {
             return
         }
 
-        let lines = message.components(separatedBy: "\n")
-        let font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium)
-        let paragraph = NSMutableParagraphStyle()
-        paragraph.alignment = .left
-        paragraph.lineBreakMode = .byTruncatingTail
-        let attributes: [NSAttributedString.Key: Any] = [
-            .font: font,
-            .foregroundColor: NSColor.labelColor,
-            .paragraphStyle: paragraph
-        ]
+        let leftAttributes = attributes(font: Self.multilineFont, alignment: .left)
+        let rightAttributes = attributes(font: Self.multilineFont, alignment: .right)
 
-        let textWidth = bounds.width - Self.horizontalInset * 2
+        let rect = CGRect(
+            x: Self.horizontalInset,
+            y: 0,
+            width: bounds.width - Self.horizontalInset * 2,
+            height: Self.lineHeight
+        )
         var y = Self.topInset
-        for (index, line) in lines.enumerated() {
-            line.draw(
-                in: CGRect(x: Self.horizontalInset, y: y, width: textWidth, height: Self.lineHeight),
-                withAttributes: attributes
-            )
+        for (index, line) in message.components(separatedBy: "\n").enumerated() {
+            let (label, secs) = Self.columns(of: line)
+            var row = rect
+            row.origin.y = y
+            // Label left-aligned, duration right-aligned over the same row rect — the columns
+            // line up exactly without any space padding.
+            label.draw(in: row, withAttributes: leftAttributes)
+            secs.draw(in: row, withAttributes: rightAttributes)
             y += Self.lineHeight
             // Divider under the total (first) row to set it apart from the stage list.
             if index == 0 {
                 let dividerY = y + Self.dividerGap / 2
                 NSColor.separatorColor.setFill()
-                CGRect(x: Self.horizontalInset, y: dividerY, width: textWidth, height: 1).fill()
+                CGRect(x: Self.horizontalInset, y: dividerY, width: rect.width, height: 1).fill()
                 y += Self.dividerGap
             }
         }
     }
 
     private func drawCenteredSingleLine() {
+        let attributes = attributes(font: Self.singleLineFont, alignment: .center)
+        message.draw(in: bounds.insetBy(dx: 12, dy: 11), withAttributes: attributes)
+    }
+
+    private func attributes(font: NSFont, alignment: NSTextAlignment) -> [NSAttributedString.Key: Any] {
         let paragraph = NSMutableParagraphStyle()
-        paragraph.alignment = .center
+        paragraph.alignment = alignment
         paragraph.lineBreakMode = .byTruncatingTail
-        let attributes: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: 14, weight: .semibold),
+        return [
+            .font: font,
             .foregroundColor: NSColor.labelColor,
             .paragraphStyle: paragraph
         ]
-        message.draw(in: bounds.insetBy(dx: 12, dy: 13), withAttributes: attributes)
     }
 }
 

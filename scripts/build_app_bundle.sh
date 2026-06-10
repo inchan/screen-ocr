@@ -20,6 +20,13 @@ mkdir -p "$MACOS_PATH" "$RESOURCES_PATH"
 
 cp "$BIN_PATH/ScreenOCRApp" "$MACOS_PATH/ScreenOCRApp"
 chmod +x "$MACOS_PATH/ScreenOCRApp"
+
+if [[ -f "Resources/AppIcon.icns" ]]; then
+  cp "Resources/AppIcon.icns" "$RESOURCES_PATH/AppIcon.icns"
+else
+  printf 'FAIL: missing Resources/AppIcon.icns (run scripts/generate_app_icon.sh)\n' >&2
+  exit 1
+fi
 if [[ "$EMBED_RUNTIME" == "1" ]]; then
   [[ -x ".venv-ocr/bin/python" ]] || {
     printf 'FAIL: missing OCR Python runtime: .venv-ocr/bin/python\n' >&2
@@ -84,6 +91,8 @@ cat >"$CONTENTS_PATH/Info.plist" <<PLIST
   <string>en</string>
   <key>CFBundleExecutable</key>
   <string>ScreenOCRApp</string>
+  <key>CFBundleIconFile</key>
+  <string>AppIcon</string>
   <key>CFBundleIdentifier</key>
   <string>${BUNDLE_ID}</string>
   <key>CFBundleInfoDictionaryVersion</key>

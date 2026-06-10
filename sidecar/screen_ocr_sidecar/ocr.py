@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import re
+import sys
 from collections.abc import Callable, Iterable, Mapping
 from pathlib import Path
 from typing import Any
@@ -21,12 +23,18 @@ DEFAULT_PREDICT_OPTIONS: Mapping[str, Any] = {
 }
 
 
+# Single source of truth for the model names; parallel_rec.py imports these so the detector and
+# recognizer stay in sync with the monolithic PaddleOCR path.
+DET_MODEL_NAME = "PP-OCRv5_mobile_det"
+REC_MODEL_NAME = "korean_PP-OCRv5_mobile_rec"
+
+
 def create_default_ocr() -> Any:
     from paddleocr import PaddleOCR
 
     return PaddleOCR(
-        text_detection_model_name="PP-OCRv5_mobile_det",
-        text_recognition_model_name="korean_PP-OCRv5_mobile_rec",
+        text_detection_model_name=DET_MODEL_NAME,
+        text_recognition_model_name=REC_MODEL_NAME,
         use_doc_orientation_classify=False,
         use_doc_unwarping=False,
         use_textline_orientation=False,
@@ -45,16 +53,89 @@ def recognize_image(
     ocr = factory()
     options = dict(DEFAULT_PREDICT_OPTIONS if predict_options is None else predict_options)
     raw = ocr.predict(str(path), **options)
-    lines = normalize_predict_result(raw)
+    return _build_document(path, normalize_predict_result(raw), min_score)
+
+
+def _build_document(image_path: Path, lines: list[Line], min_score: float) -> Document:
+    """Apply the optional low-confidence filter and assemble the wire Document. Shared by the
+    monolithic and split recognition paths so the filter/layout stays defined in one place."""
     if min_score > 0.0:
         lines = [line for line in lines if _coerce_score(line.get("score")) >= min_score]
-
     return {
-        "image_path": str(path),
+        "image_path": str(image_path),
         "text": recognized_text(lines),
         "line_count": len(lines),
         "lines": lines,
     }
+
+
+def _reading_order_key(line: Line) -> tuple[float, float]:
+    """Sort key that orders lines top-to-bottom then left-to-right; geometry-less lines sink to
+    the end. `list.sort` is stable, so detection order breaks ties without an explicit index."""
+    metrics = _box_metrics(line.get("box"))
+    if metrics is None:
+        return (float("inf"), float("inf"))
+    return (metrics["y_center"], metrics["x_left"])
+
+
+def _det_options(predict_options: Mapping[str, Any] | None) -> dict[str, Any]:
+    """Translate the PaddleOCR-style det knobs into paddlex detector predict kwargs."""
+    options = dict(DEFAULT_PREDICT_OPTIONS if predict_options is None else predict_options)
+    mapped: dict[str, Any] = {}
+    if "text_det_limit_side_len" in options:
+        mapped["limit_side_len"] = options["text_det_limit_side_len"]
+    if "text_det_limit_type" in options:
+        mapped["limit_type"] = options["text_det_limit_type"]
+    return mapped
+
+
+def recognize_image_parallel(
+    image_path: Path | str,
+    detector: Any,
+    rec_pool: Any,
+    predict_options: Mapping[str, Any] | None = None,
+    min_score: float = 0.0,
+) -> Document:
+    """Split detect→crop→recognize pipeline that fans recognition across processes.
+
+    Produces the same Document shape as recognize_image so the worker wire format and
+    the layout/normalization logic are unchanged; only recognition is parallelized.
+    """
+    # cv2 / paddlex are heavy, paddlex-only deps; import lazily so importing this module (e.g.
+    # for the monolithic path or tests) does not require them.
+    import cv2
+    import numpy as np
+    from paddlex.inference.pipelines.components.common.crop_image_regions import CropByPolys
+
+    path = Path(image_path)
+    image = cv2.imread(str(path))
+    if image is None:
+        return _build_document(path, [], min_score)
+
+    det_kwargs = _det_options(predict_options)
+    with contextlib.redirect_stdout(sys.stderr):
+        det_result = list(detector.predict(image, **det_kwargs))
+        polys: list[Any] = []
+        if det_result:
+            data = det_result[0].json.get("res", det_result[0].json)
+            polys = list(data.get("dt_polys", []))
+        if not polys:
+            return _build_document(path, [], min_score)
+        crops = CropByPolys(det_box_type="quad")(image, np.array(polys))
+
+    recognized = rec_pool.recognize(list(crops))
+
+    lines: list[Line] = []
+    for poly, (text, score) in zip(polys, recognized):
+        clean = str(text).strip()
+        if not clean:
+            continue
+        lines.append({"text": clean, "score": _coerce_score(score), "box": _coerce_box(poly)})
+
+    # The detector returns boxes in its own order (often bottom-to-top); the Swift client joins
+    # `lines` verbatim, so sort into human reading order to match the monolithic PaddleOCR path.
+    lines.sort(key=_reading_order_key)
+    return _build_document(path, lines, min_score)
 
 
 def recognized_text(lines: Iterable[Mapping[str, Any]]) -> str:
