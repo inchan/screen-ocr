@@ -144,17 +144,20 @@ final class PermissionDropPanelController {
     }
 
     /// Screen Recording grants only take effect on a fresh process, so offer the restart here.
+    /// The relaunch is delegated to a detached shell that waits for this instance to be gone:
+    /// launching the new instance first (openApplication + terminate) briefly ran two copies —
+    /// two OCR worker trees in Activity Monitor and a global-hotkey registration race.
     @objc private func relaunchApp() {
-        let configuration = NSWorkspace.OpenConfiguration()
-        configuration.createsNewApplicationInstance = true
-        NSWorkspace.shared.openApplication(
-            at: Bundle.main.bundleURL,
-            configuration: configuration
-        ) { _, _ in
-            DispatchQueue.main.async {
-                NSApp.terminate(nil)
-            }
-        }
+        let relauncher = Process()
+        relauncher.executableURL = URL(fileURLWithPath: "/bin/sh")
+        relauncher.arguments = [
+            "-c",
+            // $0 = bundle path; wait until our pid is gone (max ~5s) before reopening.
+            "for _ in $(seq 1 50); do kill -0 \(ProcessInfo.processInfo.processIdentifier) 2>/dev/null || break; sleep 0.1; done; open \"$0\"",
+            Bundle.main.bundlePath
+        ]
+        try? relauncher.run()
+        NSApp.terminate(nil)
     }
 }
 

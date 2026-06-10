@@ -17,6 +17,7 @@ final class ScreenOCRApp: NSObject, NSApplicationDelegate {
     private var settingsWindowController: SettingsWindowController?
     private var retentionTimer: Timer?
     private var lastScreenRecordingAlertDate: Date?
+    private var lastKnownWorkerPID: Int32?
     private let permissionDropPanel = PermissionDropPanelController()
     private let selectionOverlay = SelectionOverlayController()
     private var persistentOCR: PersistentPythonSidecarOCR?
@@ -65,6 +66,20 @@ final class ScreenOCRApp: NSObject, NSApplicationDelegate {
         if let hotKeyEventHandler {
             RemoveEventHandler(hotKeyEventHandler)
         }
+        nudgeWorkerToExit()
+    }
+
+    /// Quitting only closes the worker's stdin, and a worker mid-recognition won't see that
+    /// EOF until the current request finishes (up to the ~20s recognition ceiling) — during
+    /// which its whole process tree lingers in Activity Monitor. A SIGTERM lands at the next
+    /// interpreter bytecode and tears the pool down immediately. The pid is verified to still
+    /// be a python before signaling, in case it was recycled since we cached it.
+    private func nudgeWorkerToExit() {
+        guard let pid = lastKnownWorkerPID, pid > 0 else { return }
+        var pathBuffer = [CChar](repeating: 0, count: 4096)
+        let length = proc_pidpath(pid, &pathBuffer, UInt32(pathBuffer.count))
+        guard length > 0, String(cString: pathBuffer).lowercased().contains("python") else { return }
+        kill(pid, SIGTERM)
     }
 
     private func configureStatusItem() {
@@ -325,7 +340,14 @@ final class ScreenOCRApp: NSObject, NSApplicationDelegate {
             clipboard: PasteboardClipboard()
         )
 
-        defer { Task { await ocr.setStageHandler(nil) } }
+        defer {
+            Task {
+                await ocr.setStageHandler(nil)
+                // Timeouts/errors restart the worker mid-job; keep the cached pid current so
+                // the quit-time SIGTERM reaches the *live* worker, not a dead one.
+                self.lastKnownWorkerPID = await ocr.workerProcessIdentifier() ?? self.lastKnownWorkerPID
+            }
+        }
 
         do {
             let report = try await pipeline.run()
@@ -1105,6 +1127,7 @@ final class ScreenOCRApp: NSObject, NSApplicationDelegate {
                 let ready = try await ocr.prewarm()
                 let readyElapsedMs = elapsedMilliseconds(since: started)
                 let processID = await ocr.workerProcessIdentifier()
+                self.lastKnownWorkerPID = processID
                 var details: [String: String] = [
                     "ready_elapsed_ms": "\(readyElapsedMs)",
                     "worker_init_elapsed_ms": String(format: "%.3f", ready.initElapsedMs)

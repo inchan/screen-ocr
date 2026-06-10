@@ -196,7 +196,10 @@ def main() -> int:
             ),
             flush=True,
         )
-        return 1
+        # A failure mid-load can leave a partially spawned recognizer pool behind; skip
+        # interpreter finalization (same hazard as the shutdown path) and exit hard — any
+        # children that completed their init reap themselves via the parent watchdog.
+        os._exit(1)
 
     print(
         json.dumps(

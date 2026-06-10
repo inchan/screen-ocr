@@ -760,7 +760,17 @@ public actor PersistentPythonSidecarOCR: OCRRecognizing {
     }
 
     deinit {
-        process?.terminate()
+        // Same escalation as stopWorker: SIGTERM is ignorable while the worker sits inside a
+        // native Paddle kernel (Python only delivers it at the next bytecode), so follow up
+        // with SIGKILL — the recognizer children reap themselves via their parent watchdogs.
+        if let process, process.isRunning {
+            process.terminate()
+            DispatchQueue.global().asyncAfter(deadline: .now() + 5) {
+                if process.isRunning {
+                    kill(process.processIdentifier, SIGKILL)
+                }
+            }
+        }
     }
 
     public func prewarm() async throws -> PersistentOCRWorkerReady {
