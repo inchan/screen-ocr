@@ -108,6 +108,29 @@ class OCRContractTests(unittest.TestCase):
 
         self.assertEqual(recognized_text(lines), "Hello world\n다음 줄")
 
+    def test_recognized_text_merges_table_cells_with_real_capture_jitter(self):
+        # Regression: real 5086x2168 terminal capture (run B3FD7469, 2026-06-10). One visual
+        # table row produced three boxes whose glyph heights differ (digits vs Hangul) and
+        # whose y-centers jitter by ~1.5px after the detector's ~4.4x coordinate upscale.
+        # Pre-4f5ffab output was one line per box ordered (y, x) — the rightmost "evidence"
+        # cell (smallest y_center) came first. Row reconstruction must emit a single line in
+        # left-to-right order. Geometry below is the captured original-pixel data.
+        lines = [
+            {"text": "인식배치1→N", "score": 0.9,
+             "box": [[53, 305], [318, 305], [318, 352], [53, 352]]},      # y_center 328.5
+            {"text": "기각", "score": 0.9,
+             "box": [[454, 305], [540, 305], [540, 352], [454, 352]]},    # y_center 328.5
+            {"text": "5438→9523ms 악화 (폭 패딩 비용)", "score": 0.9,
+             "box": [[689, 301], [1390, 301], [1390, 353], [689, 353]]},  # y_center 327.0
+            {"text": "검출 스레드 조정", "score": 0.9,
+             "box": [[50, 373], [390, 373], [390, 420], [50, 420]]},      # next visual row
+        ]
+
+        self.assertEqual(
+            recognized_text(lines),
+            "인식배치1→N 기각 5438→9523ms 악화 (폭 패딩 비용)\n검출 스레드 조정",
+        )
+
     def test_recognized_text_supports_flat_rect_boxes(self):
         lines = [
             {"text": "right", "score": 0.9, "box": [120, 0, 200, 20]},
