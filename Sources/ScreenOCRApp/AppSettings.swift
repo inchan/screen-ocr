@@ -2,6 +2,12 @@ import AppKit
 import Carbon.HIToolbox
 import Foundation
 
+/// OCR engine to use for text recognition.
+enum OCREngineChoice: String, Codable, CaseIterable {
+    case paddleOCR = "paddleocr"
+    case vision = "vision"
+}
+
 /// A user-configurable global hotkey, stored as Carbon virtual key code + Carbon modifier mask
 /// (the same values `RegisterEventHotKey` expects), plus a cached human-readable label.
 struct HotkeyConfig: Codable, Equatable {
@@ -30,6 +36,8 @@ struct AppSettings: Codable, Equatable {
     /// When on, the step-by-step OCR progress popup (per-stage timings) is shown. Off by default:
     /// ordinary users only see a single-line completion toast.
     var showDebugProgress: Bool
+    /// OCR engine used for text recognition. Defaults to PaddleOCR for backward compatibility.
+    var ocrEngine: OCREngineChoice
 
     init(
         saveScreenshots: Bool = true,
@@ -38,7 +46,8 @@ struct AppSettings: Codable, Equatable {
         retentionDays: Int = 1,
         launchAtLogin: Bool = false,
         hotkey: HotkeyConfig = .default,
-        showDebugProgress: Bool = false
+        showDebugProgress: Bool = false,
+        ocrEngine: OCREngineChoice = .paddleOCR
     ) {
         self.saveScreenshots = saveScreenshots
         self.saveTextResults = saveTextResults
@@ -47,11 +56,12 @@ struct AppSettings: Codable, Equatable {
         self.launchAtLogin = launchAtLogin
         self.hotkey = hotkey
         self.showDebugProgress = showDebugProgress
+        self.ocrEngine = ocrEngine
     }
 
     // Decode defensively: a missing key falls back to its default rather than failing the load.
     enum CodingKeys: String, CodingKey {
-        case saveScreenshots, saveTextResults, saveDirectoryPath, retentionDays, launchAtLogin, hotkey, showDebugProgress
+        case saveScreenshots, saveTextResults, saveDirectoryPath, retentionDays, launchAtLogin, hotkey, showDebugProgress, ocrEngine
     }
 
     init(from decoder: Decoder) throws {
@@ -64,6 +74,7 @@ struct AppSettings: Codable, Equatable {
         launchAtLogin = try container.decodeIfPresent(Bool.self, forKey: .launchAtLogin) ?? defaults.launchAtLogin
         hotkey = try container.decodeIfPresent(HotkeyConfig.self, forKey: .hotkey) ?? defaults.hotkey
         showDebugProgress = try container.decodeIfPresent(Bool.self, forKey: .showDebugProgress) ?? defaults.showDebugProgress
+        ocrEngine = try container.decodeIfPresent(OCREngineChoice.self, forKey: .ocrEngine) ?? defaults.ocrEngine
     }
 
     var saveDirectoryURL: URL {

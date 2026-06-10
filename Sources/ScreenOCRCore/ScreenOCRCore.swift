@@ -81,6 +81,14 @@ public protocol OCRRecognizing {
     func recognizeText(in image: CapturedImage) async throws -> OCRDocument
 }
 
+/// Engines backed by an external worker process (prewarm, liveness, stage streaming).
+/// In-process engines (e.g. Apple Vision) implement only OCRRecognizing.
+public protocol OCRWorkerManaging: OCRRecognizing {
+    func prewarm() async throws -> PersistentOCRWorkerReady
+    func workerProcessIdentifier() async -> Int32?
+    func setStageHandler(_ handler: (@Sendable (OCRStage) -> Void)?) async
+}
+
 public protocol ClipboardWriting: AnyObject {
     func writeText(_ text: String) throws
 }
@@ -708,7 +716,7 @@ public struct PersistentOCRWorkerReady: Codable, Equatable, Sendable {
     }
 }
 
-public actor PersistentPythonSidecarOCR: OCRRecognizing {
+public actor PersistentPythonSidecarOCR: OCRWorkerManaging {
     private let pythonExecutablePath: String
     private let sidecarPath: String
     private let requestTimeoutMs: Int
