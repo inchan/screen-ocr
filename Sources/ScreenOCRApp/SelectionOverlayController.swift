@@ -7,8 +7,17 @@ final class SelectionOverlayController {
     private var windows: [NSWindow] = []
     private var continuation: CheckedContinuation<ScreenRegionSelection, Error>?
 
+    /// Whether a selection session is currently on screen. Callers (the hotkey path) skip new
+    /// requests while this is true.
+    var isSelecting: Bool { continuation != nil }
+
     func selectRegion() async throws -> ScreenRegionSelection {
-        try await withCheckedThrowingContinuation { continuation in
+        // A second entry would silently overwrite (and leak) the first continuation and stack
+        // duplicate overlay windows — the first capture would then never complete.
+        guard !isSelecting else {
+            throw SelectionOverlayError.alreadyActive
+        }
+        return try await withCheckedThrowingContinuation { continuation in
             self.continuation = continuation
             self.showOverlayWindows()
         }
@@ -187,9 +196,13 @@ private final class SelectionOverlayView: NSView {
 
 enum SelectionOverlayError: Error, LocalizedError {
     case cancelled
+    case alreadyActive
 
     var errorDescription: String? {
-        "Selection cancelled"
+        switch self {
+        case .cancelled: "Selection cancelled"
+        case .alreadyActive: "Selection already in progress"
+        }
     }
 }
 

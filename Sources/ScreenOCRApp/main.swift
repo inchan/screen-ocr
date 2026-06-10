@@ -250,6 +250,12 @@ final class ScreenOCRApp: NSObject, NSApplicationDelegate {
     }
 
     private func runScreenOCRFromHotKey() async {
+        // Already in capture mode (selection overlay on screen): pass on repeat presses instead
+        // of stacking a second session.
+        guard !selectionOverlay.isSelecting else {
+            writeAppStatus(status: "capture_ignored_selection_active", details: [:])
+            return
+        }
         writeAppStatus(
             status: "capture_hotkey_received",
             details: ["shortcut": settingsStore.settings.hotkey.displayString]
