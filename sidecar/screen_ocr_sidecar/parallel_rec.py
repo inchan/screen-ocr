@@ -30,9 +30,13 @@ def _default_workers() -> int:
                 return value
         except ValueError:
             pass
-    # 4 measured best on a 6-perf-core machine; extra workers regressed (scheduling).
+    # cpu-2 leaves headroom for the detector process and the app. Measured on a 10-core
+    # M2 Pro (6P+4E, dense 23-line capture): 4 workers 2372ms e2e, 6 -> 1919ms, 8 -> 1789ms,
+    # 10 -> no further gain. The earlier "4 is best" result did not hold up under the
+    # production-path benchmark (scripts/bench_stage.py); efficiency cores still help
+    # because the LPT width split keeps the long crops on the fast workers.
     cpu = os.cpu_count() or 4
-    return max(1, min(4, cpu - 2))
+    return max(1, min(8, cpu - 2))
 
 
 def create_detector(device: str = "cpu") -> Any:
