@@ -1226,6 +1226,12 @@ private struct AppRuntimePaths {
     }
 }
 
+// macOS 26 (Tahoe) infers leading icons for menu items from their action ("Settings…" gets a
+// gear, etc.) — setting item.image = nil cannot override it because the image is attached at
+// render time. This app-scoped default opts the whole app out; registered before the app runs
+// so the status menu is built with it in effect.
+UserDefaults.standard.register(defaults: ["NSMenuEnableActionImages": false])
+
 let app = NSApplication.shared
 let delegate = ScreenOCRApp()
 app.delegate = delegate
