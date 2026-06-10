@@ -12,8 +12,8 @@ from typing import Any
 
 Line = dict[str, Any]
 Document = dict[str, Any]
-# Cap the longest side at 1152 (downscale only — never upscale). The previous 736 cap
-# shrank wide single-line crops (e.g. 2540x132) until their text was ~38px tall and the
+# Cap the detector input's longest side (downscale only — never upscale). The previous 736
+# cap shrank wide single-line crops (e.g. 2540x132) until their text was ~38px tall and the
 # detector found nothing; 1152 keeps such a strip at ~60px tall so the text stays legible,
 # while still bounding cost for large/full-screen captures (a "min" strategy instead blows
 # up wide strips to multi-megapixel and pushes a normal crop past the request timeout).
@@ -24,6 +24,20 @@ DEFAULT_PREDICT_OPTIONS: Mapping[str, Any] = {
     "text_det_limit_side_len": 1152,
     "text_det_limit_type": "max",
 }
+
+# A fixed cap is really a downscale *ratio* that worsens with capture size: at 1152 a
+# 5086px-wide retina capture detects at 0.226x, where box edges (upscaled ~4.4x back to
+# original coordinates) clip leading characters ("검출입력캡…" lost its "검"). Keep the
+# proven 1152 for ordinary captures but never let the detector see less than ~0.3x of a
+# very large one, bounded at 1536 (the old fixed cap) so no size gets slower than before.
+DET_LIMIT_MIN = 1152
+DET_LIMIT_MAX = 1536
+DET_MIN_SCALE = 0.3
+
+
+def adaptive_det_limit(width: int, height: int) -> int:
+    longest = max(width, height)
+    return max(DET_LIMIT_MIN, min(DET_LIMIT_MAX, round(longest * DET_MIN_SCALE)))
 
 
 # Single source of truth for the model names; parallel_rec.py imports these so the detector and
@@ -115,7 +129,16 @@ def recognize_image_parallel(
     if image is None:
         return _build_document(path, [], min_score)
 
-    det_kwargs = _det_options(predict_options)
+    if predict_options is None:
+        # Default path: scale the detector cap with the capture so very large screens keep
+        # at least DET_MIN_SCALE of their resolution. Explicit options are left untouched.
+        options: Mapping[str, Any] = {
+            **DEFAULT_PREDICT_OPTIONS,
+            "text_det_limit_side_len": adaptive_det_limit(image.shape[1], image.shape[0]),
+        }
+    else:
+        options = predict_options
+    det_kwargs = _det_options(options)
     with contextlib.redirect_stdout(sys.stderr):
         det_result = list(detector.predict(image, **det_kwargs))
         polys: list[Any] = []

@@ -71,6 +71,22 @@ class OCRContractTests(unittest.TestCase):
             },
         )
 
+    def test_adaptive_det_limit_keeps_fast_cap_for_ordinary_captures(self):
+        from screen_ocr_sidecar.ocr import adaptive_det_limit
+
+        # 2560-class retina captures detect fine at the fast 1152 cap (proven by benchmark).
+        self.assertEqual(adaptive_det_limit(2560, 1440), 1152)
+        self.assertEqual(adaptive_det_limit(1200, 800), 1152)
+
+    def test_adaptive_det_limit_preserves_scale_for_very_large_captures(self):
+        from screen_ocr_sidecar.ocr import adaptive_det_limit
+
+        # A 5086px-wide capture at the fixed 1152 cap detects at 0.226x and clips leading
+        # characters; the adaptive cap holds the scale at >= 0.3x ...
+        self.assertEqual(adaptive_det_limit(5086, 2168), 1526)
+        # ... but never exceeds the old fixed 1536 cap, so nothing gets slower than before.
+        self.assertEqual(adaptive_det_limit(8000, 4000), 1536)
+
     def test_recognized_text_skips_empty_lines(self):
         lines = [
             {"text": " OCR 테스트 ", "score": 0.9, "box": []},
