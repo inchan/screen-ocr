@@ -66,7 +66,7 @@ class OCRContractTests(unittest.TestCase):
         self.assertEqual(
             ocr.predict_options,
             {
-                "text_det_limit_side_len": 1536,
+                "text_det_limit_side_len": 1152,
                 "text_det_limit_type": "max",
             },
         )
