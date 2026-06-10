@@ -877,7 +877,7 @@ final class ScreenOCRApp: NSObject, NSApplicationDelegate {
         // While the permission is still missing, float the drag-and-drop helper beside the
         // Settings window: dropping the app icon into the permission list registers the app
         // without digging through a file picker.
-        if !CGPreflightScreenCaptureAccess() {
+        if !Self.canCaptureScreen() {
             permissionDropPanel.show()
         }
 
@@ -1001,7 +1001,7 @@ final class ScreenOCRApp: NSObject, NSApplicationDelegate {
     }
 
     private func ensureScreenCapturePermission() -> Bool {
-        if CGPreflightScreenCaptureAccess() {
+        if Self.canCaptureScreen() {
             return true
         }
 
@@ -1013,6 +1013,27 @@ final class ScreenOCRApp: NSObject, NSApplicationDelegate {
         writeAppStatus(status: "screen_recording_permission_required", details: screenRecordingPermissionDetails())
         showScreenRecordingPermissionAlert()
         return false
+    }
+
+    /// True only when this process can *actually* capture. CGPreflightScreenCaptureAccess
+    /// looks the app up loosely (bundle id), so after a rebuild of an ad-hoc-signed bundle —
+    /// whose TCC grant is keyed to the old code hash — it keeps returning true while the
+    /// first ScreenCaptureKit call pops the system permission dialog right past our guided
+    /// flow. Creating a throwaway 1x1 CGDisplayStream exercises the real authorization and,
+    /// unlike the capture APIs, never prompts.
+    static func canCaptureScreen() -> Bool {
+        guard CGPreflightScreenCaptureAccess() else {
+            return false
+        }
+        let stream = CGDisplayStream(
+            dispatchQueueDisplay: CGMainDisplayID(),
+            outputWidth: 1,
+            outputHeight: 1,
+            pixelFormat: Int32(kCVPixelFormatType_32BGRA),
+            properties: nil,
+            queue: .main
+        ) { _, _, _, _ in }
+        return stream != nil
     }
 
     private func showScreenRecordingPermissionAlert() {

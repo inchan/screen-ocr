@@ -115,6 +115,22 @@ cat >"$CONTENTS_PATH/Info.plist" <<PLIST
 </plist>
 PLIST
 
+# Sign with a stable identity when one exists. TCC keys an ad-hoc (linker-signed) bundle by
+# its code hash, so every rebuild used to invalidate the Screen Recording grant and the next
+# capture popped the system permission dialog again. A developer-certificate signature keeps
+# the same identity across rebuilds, so the grant survives.
+if [[ -z "${SCREEN_OCR_CODESIGN_IDENTITY:-}" ]]; then
+  SCREEN_OCR_CODESIGN_IDENTITY="$(
+    security find-identity -v -p codesigning 2>/dev/null \
+      | sed -n 's/.*"\(Apple Development: [^"]*\)".*/\1/p' | head -1
+  )"
+fi
+if [[ -n "${SCREEN_OCR_CODESIGN_IDENTITY:-}" ]]; then
+  SCREEN_OCR_CODESIGN_IDENTITY="$SCREEN_OCR_CODESIGN_IDENTITY" "$ROOT/scripts/sign_app_bundle.sh" "$APP_PATH"
+else
+  printf 'WARN: no codesigning identity found; leaving ad-hoc signature (TCC grants will not survive rebuilds)\n' >&2
+fi
+
 if [[ "$EMBED_RUNTIME" == "1" ]]; then
   printf 'Built %s with embedded OCR resources\n' "$APP_PATH"
 else
