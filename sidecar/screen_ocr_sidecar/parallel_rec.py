@@ -70,7 +70,7 @@ def _watch_parent(initial_ppid: int) -> None:
             os._exit(0)
 
 
-def _rec_init(device: str) -> None:
+def _rec_init(device: str, warm_counter: Any = None) -> None:
     # Pin each recognizer process to a single math thread; the parallelism is across
     # processes, and intra-op threads only add contention here (measured slower).
     os.environ["OMP_NUM_THREADS"] = "1"
@@ -88,6 +88,9 @@ def _rec_init(device: str) -> None:
         _REC = create_model(REC_MODEL_NAME, device=device)
         # Warm the graph with a tiny dummy so the first real request pays no JIT cost.
         _REC.predict([np.zeros((48, 96, 3), dtype=np.uint8)])
+    if warm_counter is not None:
+        with warm_counter.get_lock():
+            warm_counter.value += 1
 
 
 def _rec_chunk(chunk: list[tuple[int, np.ndarray]]) -> list[tuple[int, str, float]]:
@@ -135,17 +138,40 @@ class RecognizerPool:
     def __init__(self, device: str = "cpu", workers: int | None = None) -> None:
         self._device = device
         self._workers = workers or _default_workers()
+        self._warm_counter: Any = None
         self._pool = self._spawn_pool()
 
     def _spawn_pool(self) -> Any:
         ctx = mp.get_context("spawn")
+        # ctx.Pool returns as soon as the children are forked; each child then spends seconds
+        # importing paddlex and loading the recognizer. The counter lets wait_until_warm tell
+        # when every child finished _rec_init, so "worker ready" can mean "actually warm" —
+        # without it the first real request silently absorbed the children's model load
+        # (~5s extra on top of the warm path, measured 10.3s vs 4.8s on a dense capture).
+        self._warm_counter = ctx.Value("i", 0)
         pool = ctx.Pool(
             processes=self._workers,
             initializer=_rec_init,
-            initargs=(self._device,),
+            initargs=(self._device, self._warm_counter),
         )
-        # Each process warms itself in _rec_init (a dummy predict), so no extra warm pass here.
         return pool
+
+    def wait_until_warm(self, timeout: float = 20.0) -> bool:
+        """Blocks until every recognizer child finished loading its model (bounded).
+
+        Best-effort: on timeout (e.g. a child crashed mid-init) we proceed anyway —
+        requests then behave exactly as before this barrier existed.
+        """
+        counter = self._warm_counter
+        if counter is None:
+            return True
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            with counter.get_lock():
+                if counter.value >= self._workers:
+                    return True
+            time.sleep(0.05)
+        return False
 
     def _restart(self) -> None:
         # A timed-out or broken pool leaves workers in an unknown state; tear it down hard and

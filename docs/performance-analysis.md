@@ -208,3 +208,43 @@ Small controlled hotkey smoke after this change:
 - OCR text: `OCR테스트\nHello 123`.
 
 Status: accepted for mostly-empty large selections. Real-world large screenshots still need a representative corpus because non-uniform backgrounds may correctly fall back instead of trimming.
+
+### H6: First-request pool-warm penalty + dead-worker cold start (2026-06-10)
+
+User-reported 17s (app-reported `ocr_elapsed_ms` 14,584) for a 2504x2186 half-screen
+capture with 51 lines, while the warm production path runs the same image in ~4.8s.
+Decomposition of the gap (`scripts/bench_real_capture.py` on the original TIFF):
+
+| Window | Measured |
+| --- | ---: |
+| worker init (`load_ocr`) | 4.7-5.1 s |
+| first request immediately after init | 10,279 ms |
+| warm e2e median | 4,832 ms (recognize 4,485 ms = 84%) |
+
+Two compounding causes:
+1. `mp.Pool` returns before its children finish importing paddlex and loading the
+   recognizer, but the worker printed `ready` right away — so the *first* request
+   silently absorbed the children's model loads (~5.5s on top of the warm path).
+2. The launch-prewarmed worker had died unobserved (cause unknown; nothing respawned
+   it), so the user's request also paid the full worker spawn.
+
+Fixes:
+- `parallel_rec.py`: per-child init-completion counter (`mp.Value` via initargs) and
+  `RecognizerPool.wait_until_warm()`; `worker.load_ocr` spawns the pool first so the
+  children's model loads overlap the parent's detector construction, then blocks until
+  every child is warm. "ready" now means actually warm.
+- `main.swift`: a 10s worker-liveness watchdog re-prewarms whenever the worker process
+  is gone, so a hotkey press always finds a live, warm worker (verified by SIGKILLing
+  the worker: auto-respawned and ready within ~25s, no orphaned children).
+
+Validator (`.omx/specs/autoresearch-ocr-7s-real/validate.py`, gate <7,000 ms with
+identical accuracy on the real capture):
+
+| Metric | Before | After |
+| --- | ---: | ---: |
+| cold-exposed first request | 10,279 ms | 5,135 ms |
+| warm median | 4,832 ms | 4,340 ms |
+| line count / anchor tokens | 51 / 100% | 51 / 100% |
+
+Status: accepted. Worker init grew 4.7s -> ~5.7-6.9s (it now includes child warm-up),
+but that cost is paid at app launch / watchdog respawn, never by a user request.

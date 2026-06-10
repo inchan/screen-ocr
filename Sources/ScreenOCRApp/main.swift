@@ -30,6 +30,7 @@ final class ScreenOCRApp: NSObject, NSApplicationDelegate {
     private var isDrainingQueue = false
     private var batchProgress = OCRBatchProgress()
     private var progressTimerTask: Task<Void, Never>?
+    private var workerWatchdogTask: Task<Void, Never>?
     private var progressToastShown = false
     // Step-by-step progress state for the multi-line toast.
     private var stageProgress = OCRStageProgress()
@@ -60,6 +61,7 @@ final class ScreenOCRApp: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         retentionTimer?.invalidate()
+        workerWatchdogTask?.cancel()
         if let hotKeyRef {
             UnregisterEventHotKey(hotKeyRef)
         }
@@ -1122,6 +1124,32 @@ final class ScreenOCRApp: NSObject, NSApplicationDelegate {
     }
 
     private func prewarmOCRWorkerAtLaunch() {
+        prewarmOCRWorker()
+        startWorkerWatchdog()
+    }
+
+    /// The prewarmed worker can die outside the app's control (memory pressure, a native
+    /// crash, an external kill) and nothing respawned it until the next capture — which then
+    /// paid the full cold start on top of recognition (observed 14.6s for a capture that
+    /// runs ~4.8s warm). Poll liveness so a hotkey press always finds a live worker. The pid
+    /// stays non-nil for the whole startup window (the process spawns before model load), so
+    /// a tick during a legitimate warmup never double-spawns; concurrent starts additionally
+    /// dedupe inside startWorkerIfNeeded.
+    private func startWorkerWatchdog() {
+        workerWatchdogTask?.cancel()
+        workerWatchdogTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 10_000_000_000)
+                guard !Task.isCancelled, let self else { return }
+                let ocr = self.ocrRecognizer(paths: self.runtimePaths())
+                if await ocr.workerProcessIdentifier() == nil {
+                    self.prewarmOCRWorker()
+                }
+            }
+        }
+    }
+
+    private func prewarmOCRWorker() {
         let paths = runtimePaths()
         let ocr = ocrRecognizer(paths: paths)
         updateStatus("Warming OCR...")

@@ -33,8 +33,13 @@ class OCREngine:
 
 def load_ocr() -> OCREngine:
     with contextlib.redirect_stdout(sys.stderr):
-        detector = create_detector()
+        # Spawn the pool first: its children load their recognizer models concurrently
+        # with the parent's detector construction. The barrier at the end makes "ready"
+        # mean fully warm — previously the first request absorbed the children's
+        # still-running model loads (measured 10.3s vs the 4.8s warm path).
         rec_pool = RecognizerPool()
+        detector = create_detector()
+        rec_pool.wait_until_warm()
     return OCREngine(detector, rec_pool)
 
 
