@@ -1,4 +1,5 @@
 import AppKit
+import Carbon.HIToolbox
 
 /// The preferences window. Built programmatically (the app ships no storyboard) as a labeled
 /// grid form. File-only preferences (save toggles, directory, retention) are written straight to
@@ -11,6 +12,9 @@ final class SettingsWindowController: NSWindowController {
 
     /// Applies a candidate hotkey. Return `true` if registration succeeded.
     var applyHotkey: ((HotkeyConfig) -> Bool)?
+    /// Suspends (`true`) / resumes (`false`) the global hotkey while the recorder is capturing,
+    /// so pressing the currently registered combo re-records it instead of firing a capture.
+    var setHotkeySuspended: ((Bool) -> Void)?
     /// Applies launch-at-login. Return `true` if the change took effect.
     var applyLaunchAtLogin: ((Bool) -> Bool)?
 
@@ -19,6 +23,8 @@ final class SettingsWindowController: NSWindowController {
     private var pathLabel: NSTextField!
     private var retentionPopup: NSPopUpButton!
     private var hotkeyRecorder: HotkeyRecorderView!
+    private var hotkeyConflictLabel: NSTextField!
+    private var hotkeyConflictRow: NSGridRow?
     private var launchCheckbox: NSButton!
     private var debugCheckbox: NSButton!
 
@@ -37,6 +43,7 @@ final class SettingsWindowController: NSWindowController {
         window.title = "Screen OCR 설정"
         window.isReleasedWhenClosed = false
         super.init(window: window)
+        window.delegate = self
         window.contentView = buildContentView()
         window.center()
         syncFromSettings(store.settings)
@@ -78,6 +85,16 @@ final class SettingsWindowController: NSWindowController {
         hotkeyRecorder.onCapture = { [weak self] candidate in
             self?.handleHotkeyCapture(candidate) ?? false
         }
+        hotkeyRecorder.onRecordingStateChanged = { [weak self] recording in
+            self?.setHotkeySuspended?(recording)
+            if recording {
+                self?.setHotkeyConflictMessage(nil)
+            }
+        }
+
+        hotkeyConflictLabel = NSTextField(labelWithString: "")
+        hotkeyConflictLabel.font = .systemFont(ofSize: 11)
+        hotkeyConflictLabel.textColor = .systemRed
 
         launchCheckbox = NSButton(checkboxWithTitle: "컴퓨터 시작 시 자동 실행", target: self, action: #selector(toggleLaunchAtLogin))
 
@@ -89,6 +106,7 @@ final class SettingsWindowController: NSWindowController {
             [makeCaption("저장 위치"), pathRow],
             [makeCaption("자동 정리"), labeled(retentionPopup, suffix: "이 지나면 삭제")],
             [makeCaption("캡처 단축키"), wrap(hotkeyRecorder)],
+            [NSGridCell.emptyContentView, hotkeyConflictLabel],
             [makeCaption("시작 프로그램"), wrap(launchCheckbox)],
             [makeCaption("디버깅"), wrap(debugCheckbox)]
         ])
@@ -98,6 +116,10 @@ final class SettingsWindowController: NSWindowController {
         grid.rowSpacing = 14
         grid.column(at: 0).xPlacement = .trailing
         grid.column(at: 1).xPlacement = .leading
+
+        // The conflict message row is collapsed until a rejected combo needs explaining.
+        hotkeyConflictRow = grid.cell(for: hotkeyConflictLabel)?.row
+        hotkeyConflictRow?.isHidden = true
 
         let container = NSView()
         container.addSubview(grid)
@@ -199,18 +221,60 @@ final class SettingsWindowController: NSWindowController {
     }
 
     /// Tries to register a freshly recorded hotkey. On success, persists it; on conflict, shows an
-    /// alert and returns false so the recorder reverts to the previous value.
+    /// inline message and returns false so the recorder reverts to the previous value.
+    ///
+    /// System shortcuts need an explicit pre-check: `RegisterEventHotKey` reports success for
+    /// combos macOS itself owns (⇧⌘3 etc.), but the system swallows them first, leaving a hotkey
+    /// that silently never fires.
     private func handleHotkeyCapture(_ candidate: HotkeyConfig) -> Bool {
-        guard applyHotkey?(candidate) ?? false else {
-            let alert = NSAlert()
-            alert.messageText = "단축키를 사용할 수 없습니다"
-            alert.informativeText = "\(candidate.displayString) 은(는) 다른 앱이나 시스템에서 이미 사용 중입니다. 다른 조합을 선택하세요."
-            alert.alertStyle = .warning
-            alert.addButton(withTitle: "확인")
-            alert.runModal()
+        guard !Self.isClaimedBySystem(candidate) else {
+            setHotkeyConflictMessage("\(candidate.displayString) 은(는) macOS 시스템 단축키라 지정할 수 없습니다.")
             return false
         }
+        guard applyHotkey?(candidate) ?? false else {
+            setHotkeyConflictMessage("\(candidate.displayString) 은(는) 다른 앱에서 이미 사용 중이라 지정할 수 없습니다.")
+            return false
+        }
+        setHotkeyConflictMessage(nil)
         store.update { $0.hotkey = candidate }
         return true
+    }
+
+    /// Shows the red message under the recorder, or collapses the row when `nil`.
+    private func setHotkeyConflictMessage(_ message: String?) {
+        hotkeyConflictLabel.stringValue = message ?? ""
+        hotkeyConflictRow?.isHidden = (message == nil)
+    }
+
+    /// Whether `candidate` matches an enabled macOS symbolic hotkey (Mission Control, screenshot
+    /// shortcuts, …). Comparison is on Carbon key code + the four standard modifier bits — the
+    /// same representation `HotkeyConfig` stores.
+    static func isClaimedBySystem(_ candidate: HotkeyConfig) -> Bool {
+        var hotkeysRef: Unmanaged<CFArray>?
+        guard CopySymbolicHotKeys(&hotkeysRef) == noErr,
+              let entries = hotkeysRef?.takeRetainedValue() as? [[String: Any]] else {
+            return false
+        }
+        let relevantMask = UInt32(cmdKey | shiftKey | optionKey | controlKey)
+        for entry in entries {
+            guard (entry[kHISymbolicHotKeyEnabled as String] as? Bool) == true,
+                  let keyCode = entry[kHISymbolicHotKeyCode as String] as? Int,
+                  let modifiers = entry[kHISymbolicHotKeyModifiers as String] as? Int else {
+                continue
+            }
+            if UInt32(keyCode) == candidate.keyCode,
+               UInt32(truncatingIfNeeded: modifiers) & relevantMask == candidate.modifiers {
+                return true
+            }
+        }
+        return false
+    }
+}
+
+extension SettingsWindowController: NSWindowDelegate {
+    /// Closing the window does not resign the first responder, so a recording left in progress
+    /// would keep the global hotkey suspended forever. Force-end it here.
+    func windowWillClose(_ notification: Notification) {
+        window?.makeFirstResponder(nil)
     }
 }

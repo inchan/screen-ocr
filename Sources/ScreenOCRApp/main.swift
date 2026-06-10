@@ -232,7 +232,7 @@ final class ScreenOCRApp: NSObject, NSApplicationDelegate {
     private func runScreenOCRFromHotKey() async {
         writeAppStatus(
             status: "capture_hotkey_received",
-            details: ["shortcut": "Cmd+Shift+0"]
+            details: ["shortcut": settingsStore.settings.hotkey.displayString]
         )
         updateStatus("Capture requested")
 
@@ -653,12 +653,30 @@ final class ScreenOCRApp: NSObject, NSApplicationDelegate {
             controller.applyHotkey = { [weak self] candidate in
                 self?.applyHotkeyWithRevert(candidate) ?? false
             }
+            controller.setHotkeySuspended = { [weak self] suspended in
+                self?.setHotkeySuspended(suspended)
+            }
             controller.applyLaunchAtLogin = { [weak self] enabled in
                 self?.applyLaunchAtLogin(enabled) ?? false
             }
             settingsWindowController = controller
         }
         settingsWindowController?.present()
+    }
+
+    /// Suspends the global hotkey while the settings recorder is capturing — otherwise pressing
+    /// the currently registered combo fires a capture instead of reaching the recorder. Resuming
+    /// re-registers the persisted combo only if nothing else already did: a successful capture
+    /// (or a revert) registers its own combo before the resume callback runs.
+    private func setHotkeySuspended(_ suspended: Bool) {
+        if suspended {
+            if let existing = hotKeyRef {
+                UnregisterEventHotKey(existing)
+                hotKeyRef = nil
+            }
+        } else if hotKeyRef == nil {
+            _ = applyHotkey(settingsStore.settings.hotkey)
+        }
     }
 
     /// Applies a new hotkey, restoring the previously registered combo if the new one is rejected.

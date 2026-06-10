@@ -11,9 +11,18 @@ final class HotkeyRecorderView: NSView {
     /// Called with a candidate hotkey. Return `true` if it was accepted (registered), `false` to
     /// reject — on rejection the control keeps showing the previous value.
     var onCapture: ((HotkeyConfig) -> Bool)?
+    /// Fired when recording starts (`true`) or ends (`false`). The owner suspends the global
+    /// hotkey while recording so the currently registered combo reaches `keyDown` like any other
+    /// key instead of triggering a capture.
+    var onRecordingStateChanged: ((Bool) -> Void)?
 
     private var current: HotkeyConfig
-    private var isRecording = false
+    private var isRecording = false {
+        didSet {
+            guard oldValue != isRecording else { return }
+            onRecordingStateChanged?(isRecording)
+        }
+    }
     private let label = NSTextField(labelWithString: "")
 
     init(initial: HotkeyConfig) {
@@ -152,10 +161,12 @@ final class HotkeyRecorderView: NSView {
         return "Key \(keyCode)"
     }
 
-    /// Resolves the unmodified character a key produces, via the current keyboard layout.
+    /// Resolves the unmodified character a key produces. Uses the ASCII-capable layout so the
+    /// label stays Latin ("⌘D") even while a Hangul/kana input source is active — the raw current
+    /// layout would render jamo like "⌘ㅇ".
     private static func character(for keyCode: UInt16) -> String? {
         guard let layoutData = TISGetInputSourceProperty(
-            TISCopyCurrentKeyboardLayoutInputSource().takeRetainedValue(),
+            TISCopyCurrentASCIICapableKeyboardLayoutInputSource().takeRetainedValue(),
             kTISPropertyUnicodeKeyLayoutData
         ) else { return nil }
         let data = Unmanaged<CFData>.fromOpaque(layoutData).takeUnretainedValue() as Data
