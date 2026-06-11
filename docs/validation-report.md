@@ -19,7 +19,7 @@ Verified on the local macOS host:
 Implementation evidence:
 - `scripts/build_app_bundle.sh` now embeds `Contents/Frameworks/Python.framework` in embedded-runtime mode and patches the Python launcher to use the bundled framework.
 - `scripts/sign_app_bundle.sh` explicitly signs the embedded Python framework executables before signing the app bundle.
-- `.github/workflows/unsigned-release.yml` builds/tests pull requests and publishes an ad-hoc signed, non-notarized zip release on tags or manual dispatch.
+- `.github/workflows/unsigned-release.yml` builds/tests pull requests and publishes an ad-hoc signed, non-notarized zip release when `VERSION` changes on `main` or when manually dispatched.
 - `docs/release-unsigned.md` documents Gatekeeper expectations and the unsigned release contract.
 
 Known verification gap:

@@ -249,7 +249,7 @@ Rejected: Keep a single-page settings grid. It became ambiguous after adding eng
 
 Status: accepted
 
-Decision: Add an unauthenticated release path that produces an ad-hoc signed, non-notarized `.app` zip through GitHub Actions. The release artifact embeds PaddleOCR runtime resources and keeps Apple Vision selectable, but it does not use Developer ID signing or Apple notarization.
+Decision: Add an unauthenticated release path that produces an ad-hoc signed, non-notarized `.app` zip through GitHub Actions. Pull requests run validation only. A release is built when a PR that changes `VERSION` is merged to `main`, or when a maintainer runs the workflow manually. The release artifact embeds PaddleOCR runtime resources and keeps Apple Vision selectable, but it does not use Developer ID signing or Apple notarization.
 
 Reason: The user does not have an Apple Developer account and explicitly wants distribution without Apple authentication. GitHub Releases can host the artifact using the repository's built-in token; no Apple secrets are needed.
 

@@ -3,13 +3,13 @@ name: Unsigned Release
 on:
   pull_request:
   push:
-    tags:
-      - "v*"
+    branches:
+      - main
   workflow_dispatch:
     inputs:
-      tag:
-        description: "Release tag to create or update, for example v0.1.0"
-        required: true
+      version:
+        description: "Release version to create or update, for example 0.1.0"
+        required: false
         type: string
 
 permissions:
@@ -35,40 +35,81 @@ jobs:
   unsigned-release:
     if: github.event_name != 'pull_request'
     runs-on: macos-latest
-    env:
-      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve release
+        id: release
+        env:
+          MANUAL_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || '' }}
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+
+          if [[ -n "$MANUAL_VERSION" ]]; then
+            version="${MANUAL_VERSION#v}"
+          else
+            version="$(tr -d '[:space:]' < VERSION)"
+          fi
+
+          if [[ -z "$version" ]]; then
+            echo "VERSION is empty" >&2
+            exit 1
+          fi
+
+          should_release=1
+          if [[ "$EVENT_NAME" == "push" ]]; then
+            if git rev-parse --verify "$BEFORE_SHA^{commit}" >/dev/null 2>&1; then
+              if ! git diff --name-only "$BEFORE_SHA" "$GITHUB_SHA" | grep -qx 'VERSION'; then
+                should_release=0
+              fi
+            fi
+          fi
+
+          {
+            echo "version=$version"
+            echo "release_tag=v$version"
+            echo "should_release=$should_release"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Select framework Python
+        if: steps.release.outputs.should_release == '1'
         run: |
           brew list python@3.12 >/dev/null 2>&1 || brew install python@3.12
           echo "SCREEN_OCR_PYTHON=$(brew --prefix python@3.12)/bin/python3.12" >> "$GITHUB_ENV"
 
       - name: Prepare OCR runtime
+        if: steps.release.outputs.should_release == '1'
         run: scripts/setup_ocr_env.sh
 
       - name: Build unsigned embedded app bundle
+        if: steps.release.outputs.should_release == '1'
         run: |
-          version="${RELEASE_TAG#v}"
+          version="${{ steps.release.outputs.version }}"
           SCREEN_OCR_VERSION="$version" SCREEN_OCR_EMBED_RUNTIME=1 SCREEN_OCR_CODESIGN_IDENTITY=- scripts/build_app_bundle.sh
 
       - name: Verify bundle
+        if: steps.release.outputs.should_release == '1'
         run: |
           scripts/verify_app_bundle.sh
           scripts/verify_embedded_runtime_bundle.sh
           scripts/verify_app_signature.sh
 
       - name: Package unsigned app
+        if: steps.release.outputs.should_release == '1'
         run: |
           set -euo pipefail
+          release_tag="${{ steps.release.outputs.release_tag }}"
           arch="$(uname -m)"
           mkdir -p dist/release
-          artifact="dist/release/Screen-OCR-${RELEASE_TAG}-unsigned-macos-${arch}.zip"
+          artifact="dist/release/Screen-OCR-${release_tag}-unsigned-macos-${arch}.zip"
           ditto -c -k --sequesterRsrc --keepParent "dist/Screen OCR.app" "$artifact"
           shasum -a 256 "$artifact" > "$artifact.sha256"
           cat > dist/release/UNSIGNED-README.txt <<README
-          Screen OCR ${RELEASE_TAG}
+          Screen OCR ${release_tag}
 
           This build is ad-hoc signed and not notarized. It does not use an
           Apple Developer account, Developer ID certificate, or Apple
@@ -83,23 +124,26 @@ jobs:
           README
 
       - uses: actions/upload-artifact@v4
+        if: steps.release.outputs.should_release == '1'
         with:
-          name: screen-ocr-unsigned-${{ env.RELEASE_TAG }}
+          name: screen-ocr-unsigned-${{ steps.release.outputs.release_tag }}
           path: |
             dist/release/*.zip
             dist/release/*.sha256
             dist/release/UNSIGNED-README.txt
 
       - name: Publish GitHub release
+        if: steps.release.outputs.should_release == '1'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release upload "$RELEASE_TAG" dist/release/* --clobber
+          release_tag="${{ steps.release.outputs.release_tag }}"
+          if gh release view "$release_tag" >/dev/null 2>&1; then
+            gh release upload "$release_tag" dist/release/* --clobber
           else
-            gh release create "$RELEASE_TAG" dist/release/* \
+            gh release create "$release_tag" dist/release/* \
               --target "$GITHUB_SHA" \
-              --title "Screen OCR ${RELEASE_TAG}" \
+              --title "Screen OCR ${release_tag}" \
               --notes-file dist/release/UNSIGNED-README.txt
           fi
