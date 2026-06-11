@@ -21,6 +21,7 @@ final class ScreenOCRApp: NSObject, NSApplicationDelegate {
     private let permissionDropPanel = PermissionDropPanelController()
     private let selectionOverlay = SelectionOverlayController()
     private var persistentOCR: PersistentPythonSidecarOCR?
+    private var persistentOCRWorkerCount: Int?
     private let copyToastPresenter = CopyToastPresenter()
 
     // Serial OCR queue: region selection runs immediately per hotkey, but the captured images
@@ -1178,8 +1179,13 @@ final class ScreenOCRApp: NSObject, NSApplicationDelegate {
     private func prewarmOCRWorker() {
         let paths = runtimePaths()
         let ocr = ocrRecognizer(paths: paths)
+        let workerCountLabel = paddleWorkerCountLabel()
         updateStatus("Warming OCR...")
-        writeWorkerStatus(status: "warming", details: ["shortcut": "Cmd+Shift+0"], paths: paths)
+        writeWorkerStatus(
+            status: "warming",
+            details: ["shortcut": "Cmd+Shift+0", "paddle_rec_workers": workerCountLabel],
+            paths: paths
+        )
 
         Task {
             let started = Date()
@@ -1190,7 +1196,8 @@ final class ScreenOCRApp: NSObject, NSApplicationDelegate {
                 self.lastKnownWorkerPID = processID
                 var details: [String: String] = [
                     "ready_elapsed_ms": "\(readyElapsedMs)",
-                    "worker_init_elapsed_ms": String(format: "%.3f", ready.initElapsedMs)
+                    "worker_init_elapsed_ms": String(format: "%.3f", ready.initElapsedMs),
+                    "paddle_rec_workers": workerCountLabel
                 ]
                 if let processID {
                     details["worker_pid"] = "\(processID)"
@@ -1205,7 +1212,7 @@ final class ScreenOCRApp: NSObject, NSApplicationDelegate {
                 updateStatus("OCR worker failed")
                 writeWorkerStatus(
                     status: "failed",
-                    details: ["error": error.localizedDescription],
+                    details: ["error": error.localizedDescription, "paddle_rec_workers": workerCountLabel],
                     paths: paths
                 )
             }
@@ -1213,15 +1220,18 @@ final class ScreenOCRApp: NSObject, NSApplicationDelegate {
     }
 
     private func ocrRecognizer(paths: AppRuntimePaths) -> PersistentPythonSidecarOCR {
-        if let persistentOCR {
+        let workerCount = settingsStore.settings.paddleOCRWorkerCount
+        if let persistentOCR, persistentOCRWorkerCount == workerCount {
             return persistentOCR
         }
 
         let ocr = PersistentPythonSidecarOCR(
             pythonExecutablePath: paths.pythonExecutable.path,
-            sidecarPath: paths.sidecarDirectory.path
+            sidecarPath: paths.sidecarDirectory.path,
+            recognitionWorkerCount: workerCount
         )
         persistentOCR = ocr
+        persistentOCRWorkerCount = workerCount
         return ocr
     }
 
@@ -1236,10 +1246,18 @@ final class ScreenOCRApp: NSObject, NSApplicationDelegate {
     private func resolveOCREngine(paths: AppRuntimePaths) -> any OCRRecognizing & Sendable {
         switch settingsStore.settings.ocrEngine {
         case .vision:
+            #if canImport(Vision)
             return VisionOCREngine()
+            #else
+            return ocrRecognizer(paths: paths)
+            #endif
         case .paddleOCR:
             return ocrRecognizer(paths: paths)
         }
+    }
+
+    private func paddleWorkerCountLabel() -> String {
+        settingsStore.settings.paddleOCRWorkerCount.map(String.init) ?? "auto"
     }
 
     private func writeWorkerStatus(
@@ -1573,4 +1591,3 @@ private extension ScreenOCRStageTimings {
         diagnosticPayload.mapValues(String.init)
     }
 }
-

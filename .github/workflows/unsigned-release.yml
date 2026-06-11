@@ -1,0 +1,105 @@
+name: Unsigned Release
+
+on:
+  pull_request:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to create or update, for example v0.1.0"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  pr-check:
+    if: github.event_name == 'pull_request'
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build and test Swift targets
+        run: |
+          swift build --product ScreenOCRApp
+          swift test
+
+      - name: Run layout smokes
+        run: |
+          bash scripts/run_hotkey_recorder_layout_smoke.sh
+          bash scripts/run_settings_window_layout_smoke.sh
+
+  unsigned-release:
+    if: github.event_name != 'pull_request'
+    runs-on: macos-latest
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select framework Python
+        run: |
+          brew list python@3.12 >/dev/null 2>&1 || brew install python@3.12
+          echo "SCREEN_OCR_PYTHON=$(brew --prefix python@3.12)/bin/python3.12" >> "$GITHUB_ENV"
+
+      - name: Prepare OCR runtime
+        run: scripts/setup_ocr_env.sh
+
+      - name: Build unsigned embedded app bundle
+        run: |
+          version="${RELEASE_TAG#v}"
+          SCREEN_OCR_VERSION="$version" SCREEN_OCR_EMBED_RUNTIME=1 SCREEN_OCR_CODESIGN_IDENTITY=- scripts/build_app_bundle.sh
+
+      - name: Verify bundle
+        run: |
+          scripts/verify_app_bundle.sh
+          scripts/verify_embedded_runtime_bundle.sh
+          scripts/verify_app_signature.sh
+
+      - name: Package unsigned app
+        run: |
+          set -euo pipefail
+          arch="$(uname -m)"
+          mkdir -p dist/release
+          artifact="dist/release/Screen-OCR-${RELEASE_TAG}-unsigned-macos-${arch}.zip"
+          ditto -c -k --sequesterRsrc --keepParent "dist/Screen OCR.app" "$artifact"
+          shasum -a 256 "$artifact" > "$artifact.sha256"
+          cat > dist/release/UNSIGNED-README.txt <<README
+          Screen OCR ${RELEASE_TAG}
+
+          This build is ad-hoc signed and not notarized. It does not use an
+          Apple Developer account, Developer ID certificate, or Apple
+          notarization service.
+
+          macOS Gatekeeper will warn that the developer cannot be verified.
+          Open it only if you trust this release source. Use Finder's Open
+          flow or System Settings > Privacy & Security > Open Anyway.
+
+          This artifact embeds the Python/PaddleOCR runtime and also keeps
+          Apple Vision selectable on supported macOS versions.
+          README
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: screen-ocr-unsigned-${{ env.RELEASE_TAG }}
+          path: |
+            dist/release/*.zip
+            dist/release/*.sha256
+            dist/release/UNSIGNED-README.txt
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" dist/release/* --clobber
+          else
+            gh release create "$RELEASE_TAG" dist/release/* \
+              --target "$GITHUB_SHA" \
+              --title "Screen OCR ${RELEASE_TAG}" \
+              --notes-file dist/release/UNSIGNED-README.txt
+          fi

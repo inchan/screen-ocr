@@ -213,6 +213,74 @@ final class ScreenOCRCoreTests: XCTestCase {
         XCTAssertEqual(document.metadata["preprocess_status"], "applied")
     }
 
+    func testPersistentPythonSidecarOCRPassesExplicitRecognitionWorkerCount() async throws {
+        let executable = try makeExecutableScript(
+            name: "fake-worker-rec-workers",
+            body: """
+            #!/bin/sh
+            printf '%s\\n' '{"event":"ready","ok":true,"init_elapsed_ms":1}'
+            while IFS= read -r line; do
+              value="${SCREEN_OCR_REC_WORKERS:-auto}"
+              printf '{"ok":true,"text":"%s","line_count":1,"lines":[{"text":"%s","score":1.0}],"diagnostics":{},"metadata":{}}\\n' "$value" "$value"
+            done
+            """
+        )
+        let ocr = PersistentPythonSidecarOCR(
+            pythonExecutablePath: executable.path,
+            sidecarPath: "/tmp/sidecar",
+            recognitionWorkerCount: 4
+        )
+        let image = CapturedImage(
+            id: "fixture://worker-count-explicit",
+            width: 320,
+            height: 120,
+            filePath: "/tmp/input.png"
+        )
+
+        let document = try await ocr.recognizeText(in: image)
+
+        XCTAssertEqual(document.normalizedText, "4")
+    }
+
+    func testPersistentPythonSidecarOCRAutoRecognitionWorkerCountClearsParentEnv() async throws {
+        let previous = getenv("SCREEN_OCR_REC_WORKERS").map { String(cString: $0) }
+        setenv("SCREEN_OCR_REC_WORKERS", "9", 1)
+        defer {
+            if let previous {
+                setenv("SCREEN_OCR_REC_WORKERS", previous, 1)
+            } else {
+                unsetenv("SCREEN_OCR_REC_WORKERS")
+            }
+        }
+
+        let executable = try makeExecutableScript(
+            name: "fake-worker-rec-workers-auto",
+            body: """
+            #!/bin/sh
+            printf '%s\\n' '{"event":"ready","ok":true,"init_elapsed_ms":1}'
+            while IFS= read -r line; do
+              value="${SCREEN_OCR_REC_WORKERS:-auto}"
+              printf '{"ok":true,"text":"%s","line_count":1,"lines":[{"text":"%s","score":1.0}],"diagnostics":{},"metadata":{}}\\n' "$value" "$value"
+            done
+            """
+        )
+        let ocr = PersistentPythonSidecarOCR(
+            pythonExecutablePath: executable.path,
+            sidecarPath: "/tmp/sidecar",
+            recognitionWorkerCount: nil
+        )
+        let image = CapturedImage(
+            id: "fixture://worker-count-auto",
+            width: 320,
+            height: 120,
+            filePath: "/tmp/input.png"
+        )
+
+        let document = try await ocr.recognizeText(in: image)
+
+        XCTAssertEqual(document.normalizedText, "auto")
+    }
+
     func testPersistentPythonSidecarOCRReportsWorkerError() async throws {
         let executable = try makeExecutableScript(
             name: "fake-worker-error",

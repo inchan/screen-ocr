@@ -12,6 +12,23 @@ SIGN_IDENTITY="${SCREEN_OCR_CODESIGN_IDENTITY:--}"
   exit 1
 }
 
+PYTHON_FRAMEWORK="$APP_PATH/Contents/Frameworks/Python.framework"
+if [[ -d "$PYTHON_FRAMEWORK" ]]; then
+  while IFS= read -r binary; do
+    codesign \
+      --force \
+      --sign "$SIGN_IDENTITY" \
+      --timestamp=none \
+      "$binary"
+  done < <(
+    find "$PYTHON_FRAMEWORK/Versions" \
+      \( -path '*/Python' -o -path '*/bin/python3.*' \) \
+      -type f \
+      -perm -111 \
+      -print
+  )
+fi
+
 codesign \
   --force \
   --deep \

@@ -20,9 +20,14 @@ Use vertical BDD/TDD slices. Add one behavior-level test, make it pass with the 
 - Noninteractive screen smoke: render known text, capture it through ScreenCaptureKit, OCR it with PaddleOCR, and verify clipboard text.
 - Scripted hotkey smoke: launch the app and fixture window, synthesize `Cmd+Shift+0`, drag a known region, and verify `capture_ocr_finished` plus clipboard text.
 - Persistent OCR worker smoke: start the worker, wait for ready, run repeated fixture OCR requests through the worker protocol, verify text quality, record ready latency, request median, timeout behavior, and RSS.
+- Persistent OCR worker configuration: verify explicit Paddle worker counts are passed as `SCREEN_OCR_REC_WORKERS`, and `Auto` omits that variable so the Python CPU-count heuristic remains authoritative.
 - OCR preprocessing unit/integration: given a large mostly-empty screenshot with two text-like regions, generate a preprocessed PNG after capture and before OCR, verify dimensions shrink with padding, record elapsed time, and verify unsafe/small images fall back to the original path.
 - Clipboard-success toast smoke boundary: verify the successful hotkey path still reaches clipboard and status success; visual toast placement is covered by deterministic frame calculation tests unless a later screenshot-based UI harness is added.
 - Hotkey reliability smoke: repeat the scripted hotkey smoke 20 times and require at least 95% success after permissions are granted.
+- OCR engine comparison smoke: run `ScreenOCRSmoke engine-bench` on the same image with `--engine vision` and `--engine paddle`, record latency, line count, and qualitative text-shape differences. For default-engine decisions, use a representative corpus with exact expected text so CER can be compared per engine.
+- Settings engine availability: verify Vision is selectable only on macOS/Vision-capable builds; unsupported platforms must show it disabled or normalize persisted `vision` settings back to PaddleOCR.
+- Settings hotkey layout smoke: compile the real `HotkeyRecorderView` with its settings types, instantiate it under AppKit, and verify its exposed first/last baselines match the centered label baselines so the `NSGridView` settings row can align "캡처 단축키" with the input field.
+- Settings redesign smoke: build `ScreenOCRApp` and verify the settings window can construct the two-pane General/Capture/Engine layout without losing existing controls or side-effect handlers. A screenshot/UI-state harness should follow for full visual proof.
 
 ## Initial Fixtures
 
@@ -55,7 +60,8 @@ Current benchmark baseline:
 - Controlled fixture corpus: 20 Korean/English UI-style images.
 - Latest run: 20/20 fixtures passed.
 - PaddleOCR initialization: 4391.28 ms.
-- Warm OCR median over 7 runs per fixture: 281.285 ms after applying `text_det_limit_side_len=736` and `text_det_limit_type=max`.
+- Historical warm OCR median over 7 runs per fixture: 281.285 ms after applying the earlier `text_det_limit_side_len=736` and `text_det_limit_type=max` monolithic benchmark setting.
+- Current PaddleOCR production worker detector behavior: adaptive `text_det_limit_side_len` from 1152 to 1536, scaling large captures to preserve detection while retaining the faster 1152 cap for ordinary captures.
 - Median character error rate: 0.0.
 - Mean character error rate: 0.0072.
 - Max observed character error rate: 0.0588.
@@ -68,6 +74,7 @@ Current benchmark baseline:
 - Local app bundle structure and launch smoke are required before treating the project as a Mac utility rather than only a SwiftPM executable.
 - Local ad-hoc app signature verification passes with strict codesign verification.
 - Embedded OCR-resource bundle fixture smoke passes with clipboard text `OCR테스트\nHello 123`.
+- User-provided dense screenshot engine comparison on 2026-06-11: Vision 4278 ms / 30 lines, PaddleOCR worker 7478 ms / 110 lines plus 5957 ms worker init. Vision was better on this screenshot, but this was qualitative because no exact expected transcript exists.
 
 Product-readiness candidate gates:
 - At least 20 real representative screen crops, separate from the controlled synthetic fixture corpus.
@@ -78,7 +85,11 @@ Product-readiness candidate gates:
 - OCR preprocessing keeps small-crop behavior unchanged and records `preprocess_elapsed_ms`, original/preprocessed dimensions, and applied/fallback status before claiming large-region speed improvements.
 - Hotkey-to-clipboard success rate at least 95% across 20 repeated runs after permissions are granted.
 - On macOS 15+, normal capture produces no deprecated capture API privacy warning.
-- Release candidate passes signing, notarization, and stapler checks when Developer ID distribution begins.
+- Unsigned release candidate passes embedded runtime verification, ad-hoc signature verification, zip packaging, and manual Gatekeeper-open documentation checks. Developer ID notarization/stapling checks apply only if a future credentialed distribution path begins.
+- Default OCR engine changes require a representative real-screen corpus with exact expected text, per-engine CER/latency reports, and no material regression on Korean, English, code-like, dense, and wide-strip cases.
+- Paddle worker-count UI changes must preserve `Auto` as the default and prove that numeric choices affect the next worker process rather than only the settings file.
+- Settings row alignment changes must include a layout smoke or screenshot harness that proves custom controls expose sane AppKit baselines instead of relying on visual inspection only.
+- Settings redesign changes must preserve immediate application of existing settings and keep PaddleOCR worker controls visible only on the Engine page while PaddleOCR is selected.
 
 These thresholds are starting gates and must be revised with evidence.
 

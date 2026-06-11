@@ -31,10 +31,11 @@ final class HotkeyRecorderView: NSView {
     private var modifiersHeld = false
     private var sawKeyDownDuringHold = false
     private let label = NSTextField(labelWithString: "")
+    private static let controlHeight: CGFloat = 24
 
     init(initial: HotkeyConfig) {
         current = initial
-        super.init(frame: CGRect(x: 0, y: 0, width: 140, height: 24))
+        super.init(frame: CGRect(x: 0, y: 0, width: 140, height: Self.controlHeight))
         wantsLayer = true
         layer?.cornerRadius = 6
         layer?.borderWidth = 1
@@ -46,7 +47,7 @@ final class HotkeyRecorderView: NSView {
         addSubview(label)
         NSLayoutConstraint.activate([
             widthAnchor.constraint(greaterThanOrEqualToConstant: 130),
-            heightAnchor.constraint(equalToConstant: 24),
+            heightAnchor.constraint(equalToConstant: Self.controlHeight),
             label.centerXAnchor.constraint(equalTo: centerXAnchor),
             label.centerYAnchor.constraint(equalTo: centerYAnchor)
         ])
@@ -54,6 +55,16 @@ final class HotkeyRecorderView: NSView {
     }
 
     required init?(coder: NSCoder) { nil }
+
+    override var firstBaselineOffsetFromTop: CGFloat {
+        let labelTop = centeredLabelInset()
+        return labelTop + label.firstBaselineOffsetFromTop
+    }
+
+    override var lastBaselineOffsetFromBottom: CGFloat {
+        let labelBottom = centeredLabelInset()
+        return labelBottom + label.lastBaselineOffsetFromBottom
+    }
 
     /// Updates the displayed value without firing `onCapture` (used to revert after a rejection).
     func setConfig(_ config: HotkeyConfig) {
@@ -158,6 +169,11 @@ final class HotkeyRecorderView: NSView {
             layer?.borderColor = NSColor.separatorColor.cgColor
             layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
         }
+    }
+
+    private func centeredLabelInset() -> CGFloat {
+        let height = bounds.height > 0 ? bounds.height : Self.controlHeight
+        return max(0, (height - label.intrinsicContentSize.height) / 2)
     }
 
     // MARK: - Mapping helpers

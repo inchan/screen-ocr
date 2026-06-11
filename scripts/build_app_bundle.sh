@@ -6,9 +6,11 @@ cd "$ROOT"
 
 APP_NAME="Screen OCR"
 BUNDLE_ID="dev.screenocr.local"
+APP_VERSION="${SCREEN_OCR_VERSION:-0.0.1}"
 APP_PATH="dist/${APP_NAME}.app"
 CONTENTS_PATH="$APP_PATH/Contents"
 MACOS_PATH="$CONTENTS_PATH/MacOS"
+FRAMEWORKS_PATH="$CONTENTS_PATH/Frameworks"
 RESOURCES_PATH="$CONTENTS_PATH/Resources"
 EMBED_RUNTIME="${SCREEN_OCR_EMBED_RUNTIME:-0}"
 
@@ -16,7 +18,7 @@ swift build -c release --product ScreenOCRApp >/dev/null
 BIN_PATH="$(swift build -c release --show-bin-path)"
 
 rm -rf "$APP_PATH"
-mkdir -p "$MACOS_PATH" "$RESOURCES_PATH"
+mkdir -p "$MACOS_PATH" "$FRAMEWORKS_PATH" "$RESOURCES_PATH"
 
 cp "$BIN_PATH/ScreenOCRApp" "$MACOS_PATH/ScreenOCRApp"
 chmod +x "$MACOS_PATH/ScreenOCRApp"
@@ -46,11 +48,69 @@ if [[ "$EMBED_RUNTIME" == "1" ]]; then
     --exclude '__pycache__' \
     --exclude '*.pyc' \
     .venv-ocr/ "$RESOURCES_PATH/python-runtime/"
-  python_target="$(readlink .venv-ocr/bin/python3.12 || true)"
-  if [[ -z "$python_target" || ! -x "$python_target" ]]; then
-    printf 'FAIL: .venv-ocr/bin/python3.12 must resolve to an executable Python interpreter\n' >&2
+
+  python_info="$(
+    .venv-ocr/bin/python - <<'PY'
+import pathlib
+import sys
+
+base = pathlib.Path(sys._base_executable).resolve()
+framework_root = None
+for path in (base, *base.parents):
+    if path.name == "Python.framework":
+        framework_root = path
+        break
+
+if framework_root is None:
+    raise SystemExit("FAIL: selected Python is not a framework build")
+
+print(f"{sys.version_info.major}.{sys.version_info.minor}")
+print(base)
+print(framework_root)
+PY
+  )"
+  python_version="$(printf '%s\n' "$python_info" | sed -n '1p')"
+  python_base_executable="$(printf '%s\n' "$python_info" | sed -n '2p')"
+  python_framework_root="$(printf '%s\n' "$python_info" | sed -n '3p')"
+
+  if [[ -z "$python_version" || ! -x "$python_base_executable" || ! -d "$python_framework_root" ]]; then
+    printf 'FAIL: could not resolve framework Python from .venv-ocr/bin/python\n' >&2
     exit 1
   fi
+
+  python_framework_parent="$FRAMEWORKS_PATH"
+  python_framework_bundle="$python_framework_parent/Python.framework"
+  mkdir -p "$python_framework_parent"
+  rsync -a --delete \
+    --delete-excluded \
+    --exclude '__pycache__' \
+    --exclude '*.pyc' \
+    "$python_framework_root/" "$python_framework_bundle/"
+  ln -sfn "$python_version" "$python_framework_bundle/Versions/Current"
+  ln -sfn "Versions/Current/Python" "$python_framework_bundle/Python"
+  ln -sfn "Versions/Current/Headers" "$python_framework_bundle/Headers"
+  ln -sfn "Versions/Current/Resources" "$python_framework_bundle/Resources"
+
+  bundled_python_executable="$python_framework_bundle/Versions/$python_version/bin/python$python_version"
+  bundled_python_library="$python_framework_bundle/Versions/$python_version/Python"
+  [[ -x "$bundled_python_executable" ]] || {
+    printf 'FAIL: missing bundled Python executable: %s\n' "$bundled_python_executable" >&2
+    exit 1
+  }
+  [[ -f "$bundled_python_library" ]] || {
+    printf 'FAIL: missing bundled Python framework library: %s\n' "$bundled_python_library" >&2
+    exit 1
+  }
+
+  # Make the copied framework relocatable. Homebrew and Python.org framework builds link the
+  # launcher to an absolute Python.framework path, which would fail on another Mac.
+  otool -L "$bundled_python_executable" \
+    | awk '/Python\.framework\/Versions\/[0-9.]+\/Python/ { print $1 }' \
+    | while read -r dependency; do
+        install_name_tool -change "$dependency" "@executable_path/../Python" "$bundled_python_executable"
+      done
+  install_name_tool -id "@rpath/Python.framework/Versions/$python_version/Python" "$bundled_python_library"
+
   for python_name in python python3 python3.12; do
     rm -f "$RESOURCES_PATH/python-runtime/bin/$python_name"
     cat >"$RESOURCES_PATH/python-runtime/bin/$python_name" <<PYTHON_WRAPPER
@@ -58,6 +118,8 @@ if [[ "$EMBED_RUNTIME" == "1" ]]; then
 set -euo pipefail
 SCRIPT_DIR="\$(cd "\$(dirname "\$0")" && pwd)"
 RUNTIME_DIR="\$(cd "\$SCRIPT_DIR/.." && pwd)"
+RESOURCES_DIR="\$(cd "\$RUNTIME_DIR/.." && pwd)"
+CONTENTS_DIR="\$(cd "\$RESOURCES_DIR/.." && pwd)"
 SITE_PACKAGES="\$(find "\$RUNTIME_DIR/lib" -maxdepth 2 -type d -name site-packages -print -quit)"
 if [[ -n "\$SITE_PACKAGES" ]]; then
   if [[ -n "\${PYTHONPATH:-}" ]]; then
@@ -67,7 +129,8 @@ if [[ -n "\$SITE_PACKAGES" ]]; then
   fi
 fi
 export PYTHONDONTWRITEBYTECODE=1
-exec "$python_target" "\$@"
+export PYTHONNOUSERSITE=1
+exec "\$CONTENTS_DIR/Frameworks/Python.framework/Versions/$python_version/bin/python$python_version" "\$@"
 PYTHON_WRAPPER
     chmod +x "$RESOURCES_PATH/python-runtime/bin/$python_name"
   done
@@ -104,9 +167,9 @@ cat >"$CONTENTS_PATH/Info.plist" <<PLIST
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
-  <string>0.1.0</string>
+  <string>${APP_VERSION}</string>
   <key>CFBundleVersion</key>
-  <string>1</string>
+  <string>${APP_VERSION}</string>
   <key>LSMinimumSystemVersion</key>
   <string>14.0</string>
   <key>LSUIElement</key>

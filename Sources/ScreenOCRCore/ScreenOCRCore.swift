@@ -720,6 +720,7 @@ public actor PersistentPythonSidecarOCR: OCRWorkerManaging {
     private let pythonExecutablePath: String
     private let sidecarPath: String
     private let requestTimeoutMs: Int
+    private let recognitionWorkerCount: Int?
     private var process: Process?
     private var stdinHandle: FileHandle?
     private var reader: WorkerLineReader?
@@ -733,18 +734,25 @@ public actor PersistentPythonSidecarOCR: OCRWorkerManaging {
         stageHandler = handler
     }
 
-    public init(pythonExecutablePath: String, sidecarPath: String) {
+    public init(pythonExecutablePath: String, sidecarPath: String, recognitionWorkerCount: Int? = nil) {
         self.init(
             pythonExecutablePath: pythonExecutablePath,
             sidecarPath: sidecarPath,
-            requestTimeoutMs: Self.configuredTimeoutMs()
+            requestTimeoutMs: Self.configuredTimeoutMs(),
+            recognitionWorkerCount: recognitionWorkerCount
         )
     }
 
-    init(pythonExecutablePath: String, sidecarPath: String, requestTimeoutMs: Int) {
+    init(
+        pythonExecutablePath: String,
+        sidecarPath: String,
+        requestTimeoutMs: Int,
+        recognitionWorkerCount: Int? = nil
+    ) {
         self.pythonExecutablePath = pythonExecutablePath
         self.sidecarPath = sidecarPath
         self.requestTimeoutMs = max(1, requestTimeoutMs)
+        self.recognitionWorkerCount = Self.normalizedRecognitionWorkerCount(recognitionWorkerCount)
     }
 
     /// Worker startup (process spawn + model load) is legitimately slower than a single OCR
@@ -765,6 +773,11 @@ public actor PersistentPythonSidecarOCR: OCRWorkerManaging {
         // mid-flight and then forced a cold worker restart on the next request — a death
         // spiral. 30s comfortably covers large captures while still catching a true hang.
         return 30000
+    }
+
+    private static func normalizedRecognitionWorkerCount(_ count: Int?) -> Int? {
+        guard let count, count > 0 else { return nil }
+        return count
     }
 
     deinit {
@@ -871,6 +884,11 @@ public actor PersistentPythonSidecarOCR: OCRWorkerManaging {
         var environment = ProcessInfo.processInfo.environment
         environment["PYTHONPATH"] = sidecarPath
         environment["PYTHONDONTWRITEBYTECODE"] = "1"
+        if let recognitionWorkerCount {
+            environment["SCREEN_OCR_REC_WORKERS"] = "\(recognitionWorkerCount)"
+        } else {
+            environment.removeValue(forKey: "SCREEN_OCR_REC_WORKERS")
+        }
         workerProcess.environment = environment
 
         let stdinPipe = Pipe()

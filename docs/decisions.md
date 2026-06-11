@@ -122,13 +122,13 @@ Rejected: Attempt Developer ID signing/notarization in the autonomous local work
 
 Status: accepted
 
-Decision: Support `SCREEN_OCR_EMBED_RUNTIME=1 scripts/build_app_bundle.sh`, which copies the OCR Python packages, sidecar source, and fixtures into `Contents/Resources`, and replaces absolute venv symlinks with executable wrappers so strict codesign resource sealing passes.
+Decision: Support `SCREEN_OCR_EMBED_RUNTIME=1 scripts/build_app_bundle.sh`, which copies the OCR Python packages, sidecar source, fixtures, and Python.framework into the app bundle. The build patches the embedded Python launcher to load `Contents/Frameworks/Python.framework` instead of a build-machine interpreter, then ad-hoc signs the nested Python code and app bundle.
 
-Reason: The Mac utility should not have to depend on the source tree for OCR packages and sidecar code. Embedding the OCR resources proves the app can run its OCR path from bundle resources.
+Reason: The Mac utility should not have to depend on the source tree or the builder's Homebrew/Python install for OCR packages and sidecar code. Embedding the OCR resources and interpreter lets the app keep both PaddleOCR and Apple Vision selectable in an unauthenticated distribution build.
 
-Constraint: The current local venv was created from Homebrew Python and points to `/opt/homebrew/opt/python@3.12/bin/python3.12`; the wrapper still uses that interpreter. This is project-independent, but not a fully standalone Python framework distribution.
+Constraint: The embedded PaddleOCR bundle is large. The latest local embedded bundle is about 853 MB before zip packaging.
 
-Rejected: Claim a fully self-contained runtime in this slice. That would require bundling and signing a Python framework/interpreter, which is separate release engineering work.
+Rejected: Keep wrapping `/opt/homebrew/opt/python@3.12/bin/python3.12`. That verifies on the build machine but fails as a real distribution artifact on Macs without the same Homebrew path.
 
 ## D-0013: Keep ScreenCaptureKit as the macOS 14 fallback path
 
@@ -153,6 +153,8 @@ Reason: The controlled screen OCR fixtures are small UI crops, mostly 640-900 px
 Rejected: Lower detector limits such as 640 or 512 as the default. They were faster in a probe, but increased character error risk on punctuation/terminal-style fixtures.
 
 Constraint: This is a warm-inference optimization. Cold first use is still dominated by PaddleOCR initialization and Python sidecar process startup.
+
+Superseded by: D-0019 updates the production worker detector cap to `1152..1536` adaptive sizing after wide-strip and 5K-screen real-capture regressions.
 
 ## D-0015: Prototype a persistent local OCR worker before adding OCR dependencies
 
@@ -194,3 +196,65 @@ Reason: This resolves the "hard request timeout remains a separate reliability g
 Constraint: Defaults must preserve current behavior — `min_score=0.0` filters nothing, the timeout is generous, and the slim payload still decodes into the existing `OCRDocument` (which already ignored `box`). The blocking worker read runs on a background dispatch queue, not the actor's executor or a cooperative thread.
 
 Rejected: Filtering low-score lines by default. It would change recognized text and the fixture benchmark without separate quality evidence, so it stays behind an explicit env opt-in.
+
+## D-0018: Keep PaddleOCR as the default while Apple Vision remains an optional engine
+
+Status: accepted
+
+Decision: Keep `.paddleOCR` as the default OCR engine and expose Apple Vision as a selectable, in-process engine rather than replacing the default.
+
+Reason: Apple Vision is materially faster on several local probes and avoids the Python worker startup/RSS cost, but the current evidence is mixed. On the user-provided 5044x2130 screenshot, Vision returned 30 lines in 4278 ms while PaddleOCR returned 110 fragmented lines in 7478 ms after a 5957 ms worker init. However, the medium-window fixture showed Vision-specific English substitutions (`Performance` -> `Pertormance`, `fans` -> `tans`, `def` -> `det`, `five` -> `tive`). A default replacement needs a representative corpus and acceptance thresholds, not a single favorable screenshot.
+
+Verification: `swift run ScreenOCRSmoke engine-bench <provided screenshot> --engine vision --repeats 1` saved `artifacts/engine-bench/provided-screenshot-vision-20260611.json`; `SCREEN_OCR_OCR_TIMEOUT_MS=60000 SCREEN_OCR_REC_TIMEOUT_S=60 swift run ScreenOCRSmoke engine-bench <provided screenshot> --engine paddle --repeats 1` saved `artifacts/engine-bench/provided-screenshot-paddle-20260611.json`.
+
+Constraint: Vision has no worker prewarm, worker status, stage streaming, or model-cache diagnostics. The app must continue treating worker lifecycle controls as PaddleOCR-only.
+
+Rejected: Switch the default engine to Vision from the current data. The provided screenshot favors Vision, but the fixture evidence still shows accuracy regressions on some English/code-like text.
+
+## D-0019: Use adaptive PaddleOCR detector sizing for the production worker path
+
+Status: accepted
+
+Decision: The production PaddleOCR worker path uses `text_det_limit_side_len` starting at `1152`, scaling large captures up to `1536` when needed to keep detector scale near 0.3x.
+
+Reason: The older `736` cap improved small synthetic fixture latency but failed wide single-line crops by shrinking text too much. A fixed `1152` cap restored wide-strip detection and cut detection time on 2560-class captures, but a 5086px-wide real capture clipped leading characters at 0.226x detector scale. The adaptive `1152..1536` cap keeps ordinary captures on the fast setting while preserving detection scale for very large screenshots.
+
+Rejected: Keep documenting `736` as the current production default. It is now historical benchmark context, not the current worker behavior.
+
+## D-0020: Expose PaddleOCR worker count as a settings-level override
+
+Status: accepted
+
+Decision: Add a PaddleOCR-only worker-count setting with `Auto` as the default. `Auto` omits `SCREEN_OCR_REC_WORKERS` so the Python sidecar keeps using its current CPU-count heuristic; numeric selections set `SCREEN_OCR_REC_WORKERS` for the next Paddle worker process. Apple Vision remains selectable only when the platform supports Vision.
+
+Reason: Recent engine experiments showed PaddleOCR quality/speed depends on worker behavior, and users need a safe way to tune the recognizer pool without editing environment variables. Keeping `Auto` as the default preserves the existing CPU-derived behavior and avoids changing current performance unexpectedly.
+
+Constraint: Worker lifecycle controls are PaddleOCR-only. Vision is in-process and has no recognizer pool, so the worker-count control must be hidden unless PaddleOCR is selected. Unsupported platforms must not allow Vision to become the active engine.
+
+Rejected: Treat the worker-count setting as a global environment preference. That would affect Vision (which has no worker) and make `Auto` ambiguous if the parent process already had `SCREEN_OCR_REC_WORKERS` set.
+
+## D-0021: Redesign settings as a macOS two-pane form
+
+Status: accepted
+
+Decision: Redesign the settings window into a left sidebar and right detail pane with three categories: General, Capture, and Engine. The detail pane starts directly with sectioned form content and does not show a duplicate page title or page description.
+
+Reason: The settings surface now mixes storage, capture, permissions, engine selection, and diagnostics in one grid. A two-pane macOS-style layout keeps navigation predictable while preserving a compact, utility-app feel.
+
+Constraint: Settings UI text follows the OS preferred language: Korean for Korean OS language, English otherwise. Saved records/history are not browsed in settings; settings only exposes save location controls. Controls apply immediately, with help text only where the underlying effect happens on a future process or permission boundary.
+
+Rejected: Keep a single-page settings grid. It became ambiguous after adding engine selection and PaddleOCR worker controls.
+
+## D-0022: Support unsigned GitHub Releases without Apple Developer credentials
+
+Status: accepted
+
+Decision: Add an unauthenticated release path that produces an ad-hoc signed, non-notarized `.app` zip through GitHub Actions. The release artifact embeds PaddleOCR runtime resources and keeps Apple Vision selectable, but it does not use Developer ID signing or Apple notarization.
+
+Reason: The user does not have an Apple Developer account and explicitly wants distribution without Apple authentication. GitHub Releases can host the artifact using the repository's built-in token; no Apple secrets are needed.
+
+Constraint: macOS Gatekeeper will warn that the developer cannot be verified. Users must manually allow the app through Finder's Open flow or System Settings > Privacy & Security > Open Anyway. Permission grants may need re-approval after updates because ad-hoc signed builds do not have a stable Developer ID identity.
+
+Rejected: Require Developer ID signing/notarization for the first distribution path. It blocks the user's stated constraint.
+
+Rejected: Ship a Vision-only build to avoid bundling Python. The user wants the current engine choice model to remain, so PaddleOCR must remain available in the unsigned artifact.

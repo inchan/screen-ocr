@@ -101,6 +101,20 @@ if [[ -f "Package.swift" ]]; then
       fail "swift test"
     fi
 
+    note "Running hotkey recorder layout smoke..."
+    if bash scripts/run_hotkey_recorder_layout_smoke.sh; then
+      pass "hotkey recorder layout smoke"
+    else
+      fail "hotkey recorder layout smoke"
+    fi
+
+    note "Running settings window layout smoke..."
+    if bash scripts/run_settings_window_layout_smoke.sh; then
+      pass "settings window layout smoke"
+    else
+      fail "settings window layout smoke"
+    fi
+
     if grep -q 'ScreenOCRApp' Package.swift; then
       note "Running swift build for ScreenOCRApp..."
       if swift build --product ScreenOCRApp; then

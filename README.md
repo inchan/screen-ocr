@@ -56,7 +56,25 @@ scripts/verify_embedded_runtime_bundle.sh
 scripts/run_embedded_fixture_smoke.sh
 ```
 
-This embedded bundle still uses the local Python 3.12 interpreter through a wrapper. A fully standalone Python framework bundle remains release work.
+This embedded bundle includes a bundled Python.framework plus the PaddleOCR
+Python packages, so PaddleOCR and Apple Vision can both remain selectable in an
+unauthenticated distribution build.
+
+## Unsigned Distribution
+
+This project can produce an ad-hoc signed, non-notarized GitHub Release without
+an Apple Developer account:
+
+```sh
+SCREEN_OCR_EMBED_RUNTIME=1 SCREEN_OCR_CODESIGN_IDENTITY=- scripts/build_app_bundle.sh
+scripts/verify_embedded_runtime_bundle.sh
+scripts/verify_app_signature.sh
+ditto -c -k --sequesterRsrc --keepParent "dist/Screen OCR.app" "dist/Screen-OCR-unsigned.zip"
+```
+
+macOS Gatekeeper will warn that the developer cannot be verified. Users must
+explicitly allow first launch through Finder's Open flow or System Settings >
+Privacy & Security > Open Anyway. See `docs/release-unsigned.md`.
 
 ## Verify
 
@@ -90,4 +108,4 @@ The hotkey reliability runner defaults to 20 end-to-end runs and writes success-
 ## Current Limits
 
 - Region capture has a direct macOS 15.2+ path and a ScreenCaptureKit filter/sourceRect fallback for macOS 14+; the fallback has been forced and verified on the local host, but still needs a real macOS 14 host smoke before release.
-- Developer ID signing, notarization, a fully standalone Python framework bundle, and real-world screenshot corpus collection are still roadmap items.
+- Developer ID signing/notarization is not required for the unsigned release path, but Gatekeeper manual approval is expected. Real-world screenshot corpus collection is still a roadmap item.

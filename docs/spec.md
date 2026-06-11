@@ -24,17 +24,20 @@ Primary user: a macOS user who repeatedly needs to extract Korean and English te
 
 - Host app: native macOS menu-bar utility.
 - Default UI: `MenuBarExtra` or `NSStatusItem` with `LSUIElement=true`.
+- Settings UI: macOS-style two-pane window with a left sidebar (`General`, `Capture`, `Engine`) and right-side sectioned form details. Settings text follows OS language: Korean for Korean OS language, English otherwise.
 - Default shortcut: `Cmd+Shift+0` through `RegisterEventHotKey`.
 - Capture: ScreenCaptureKit region capture. The implementation uses direct display-agnostic rect capture on macOS 15.2+ and a display-filter/sourceRect fallback for macOS 14+.
-- OCR: local Python PaddleOCR sidecar.
+- OCR: local Python PaddleOCR sidecar by default; Apple Vision may be selected on macOS where the Vision framework is available.
 - Default language profile: Korean plus English.
-- Distribution target: local development `.app` bundle with ad-hoc local signing first, embedded OCR-resource bundle next, fully standalone signed Developer ID distribution later.
+- Distribution target: unauthenticated `.app` zip distribution is supported through an ad-hoc signed, non-notarized embedded runtime bundle. It keeps both PaddleOCR and Apple Vision selectable. macOS Gatekeeper warning and manual user approval are expected without Developer ID signing/notarization.
 
 ## OCR Worker Contract
 
 - The app reuses a long-lived PaddleOCR worker over JSONL (one request, one newline-delimited response). The Swift client reads responses with a buffered line reader.
 - Each OCR request is bounded by a hard timeout. On timeout the worker process is terminated and the next request restarts it, so a hung worker never freezes the menu-bar app.
 - The worker response carries `text` and per-line `{text, score}`; it omits detection `box` polygons because the app does not consume them. The one-shot `screen_ocr_sidecar.ocr` CLI still emits `box`.
+- Settings expose the OCR engine. PaddleOCR remains the default; Apple Vision is disabled on platforms where Vision is unavailable.
+- When PaddleOCR is selected, settings expose a Paddle worker-count control. The default `Auto` mode does not set `SCREEN_OCR_REC_WORKERS`, so the Python worker uses its existing CPU-count heuristic. Numeric values set `SCREEN_OCR_REC_WORKERS` for the next Paddle worker process.
 
 ### Configuration knobs (environment variables)
 

@@ -6,6 +6,23 @@ import Foundation
 enum OCREngineChoice: String, Codable, CaseIterable {
     case paddleOCR = "paddleocr"
     case vision = "vision"
+
+    var isAvailableOnCurrentPlatform: Bool {
+        switch self {
+        case .paddleOCR:
+            return true
+        case .vision:
+            #if os(macOS) && canImport(Vision)
+            return true
+            #else
+            return false
+            #endif
+        }
+    }
+
+    static func normalizedForCurrentPlatform(_ engine: OCREngineChoice) -> OCREngineChoice {
+        engine.isAvailableOnCurrentPlatform ? engine : .paddleOCR
+    }
 }
 
 /// A user-configurable global hotkey, stored as Carbon virtual key code + Carbon modifier mask
@@ -38,6 +55,11 @@ struct AppSettings: Codable, Equatable {
     var showDebugProgress: Bool
     /// OCR engine used for text recognition. Defaults to PaddleOCR for backward compatibility.
     var ocrEngine: OCREngineChoice
+    /// PaddleOCR recognizer worker count. `nil` means Auto: let the Python sidecar derive it
+    /// from CPU count using its existing `_default_workers()` heuristic.
+    var paddleOCRWorkerCount: Int?
+
+    static let paddleOCRWorkerCountRange = 1...10
 
     init(
         saveScreenshots: Bool = true,
@@ -47,7 +69,8 @@ struct AppSettings: Codable, Equatable {
         launchAtLogin: Bool = false,
         hotkey: HotkeyConfig = .default,
         showDebugProgress: Bool = false,
-        ocrEngine: OCREngineChoice = .paddleOCR
+        ocrEngine: OCREngineChoice = .paddleOCR,
+        paddleOCRWorkerCount: Int? = nil
     ) {
         self.saveScreenshots = saveScreenshots
         self.saveTextResults = saveTextResults
@@ -56,12 +79,13 @@ struct AppSettings: Codable, Equatable {
         self.launchAtLogin = launchAtLogin
         self.hotkey = hotkey
         self.showDebugProgress = showDebugProgress
-        self.ocrEngine = ocrEngine
+        self.ocrEngine = OCREngineChoice.normalizedForCurrentPlatform(ocrEngine)
+        self.paddleOCRWorkerCount = Self.normalizedPaddleOCRWorkerCount(paddleOCRWorkerCount)
     }
 
     // Decode defensively: a missing key falls back to its default rather than failing the load.
     enum CodingKeys: String, CodingKey {
-        case saveScreenshots, saveTextResults, saveDirectoryPath, retentionDays, launchAtLogin, hotkey, showDebugProgress, ocrEngine
+        case saveScreenshots, saveTextResults, saveDirectoryPath, retentionDays, launchAtLogin, hotkey, showDebugProgress, ocrEngine, paddleOCRWorkerCount
     }
 
     init(from decoder: Decoder) throws {
@@ -74,7 +98,10 @@ struct AppSettings: Codable, Equatable {
         launchAtLogin = try container.decodeIfPresent(Bool.self, forKey: .launchAtLogin) ?? defaults.launchAtLogin
         hotkey = try container.decodeIfPresent(HotkeyConfig.self, forKey: .hotkey) ?? defaults.hotkey
         showDebugProgress = try container.decodeIfPresent(Bool.self, forKey: .showDebugProgress) ?? defaults.showDebugProgress
-        ocrEngine = try container.decodeIfPresent(OCREngineChoice.self, forKey: .ocrEngine) ?? defaults.ocrEngine
+        let decodedEngine = try container.decodeIfPresent(OCREngineChoice.self, forKey: .ocrEngine) ?? defaults.ocrEngine
+        ocrEngine = OCREngineChoice.normalizedForCurrentPlatform(decodedEngine)
+        let decodedWorkerCount = try container.decodeIfPresent(Int.self, forKey: .paddleOCRWorkerCount)
+        paddleOCRWorkerCount = Self.normalizedPaddleOCRWorkerCount(decodedWorkerCount)
     }
 
     var saveDirectoryURL: URL {
@@ -88,6 +115,16 @@ struct AppSettings: Codable, Equatable {
             .appendingPathComponent("Screen OCR", isDirectory: true)
             .appendingPathComponent("captures", isDirectory: true)
     }
+
+    static func normalizedPaddleOCRWorkerCount(_ count: Int?) -> Int? {
+        guard let count, paddleOCRWorkerCountRange.contains(count) else { return nil }
+        return count
+    }
+
+    mutating func normalizeForCurrentPlatform() {
+        ocrEngine = OCREngineChoice.normalizedForCurrentPlatform(ocrEngine)
+        paddleOCRWorkerCount = Self.normalizedPaddleOCRWorkerCount(paddleOCRWorkerCount)
+    }
 }
 
 /// Loads, persists, and broadcasts `AppSettings`. The single source of truth for preferences;
@@ -98,12 +135,16 @@ final class SettingsStore {
     private let fileURL: URL
     private var observers: [(AppSettings) -> Void] = []
 
-    init() {
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-            ?? URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
-        fileURL = base
-            .appendingPathComponent("Screen OCR", isDirectory: true)
-            .appendingPathComponent("settings.json")
+    init(fileURL overrideFileURL: URL? = nil) {
+        if let overrideFileURL {
+            fileURL = overrideFileURL
+        } else {
+            let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+                ?? URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            fileURL = base
+                .appendingPathComponent("Screen OCR", isDirectory: true)
+                .appendingPathComponent("settings.json")
+        }
         settings = SettingsStore.load(from: fileURL) ?? AppSettings()
     }
 
@@ -118,6 +159,7 @@ final class SettingsStore {
     func update(_ mutate: (inout AppSettings) -> Void) -> AppSettings {
         var next = settings
         mutate(&next)
+        next.normalizeForCurrentPlatform()
         guard next != settings else { return settings }
         settings = next
         persist()

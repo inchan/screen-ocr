@@ -1,6 +1,6 @@
 # OCR Performance Analysis
 
-Last updated: 2026-06-05.
+Last updated: 2026-06-11.
 
 ## Evaluation Contract
 
@@ -248,3 +248,35 @@ identical accuracy on the real capture):
 
 Status: accepted. Worker init grew 4.7s -> ~5.7-6.9s (it now includes child warm-up),
 but that cost is paid at app launch / watchdog respawn, never by a user request.
+
+### H7: Apple Vision as a replacement candidate for dense real screenshots (2026-06-11)
+
+Hypothesis: Apple Vision may be a better default OCR engine for dense real screenshots because it runs in-process, avoids Python worker startup, and may preserve visual line grouping better than the PaddleOCR worker path.
+
+Input:
+- user-provided screenshot from 2026-06-11, 5044x2130 PNG, dark terminal-style text.
+- source path at run time: `/var/folders/hk/_bsgvvsn3rv78ysh2_cc5_wr0000gn/T/TemporaryItems/NSIRD_screencaptureui_iFn1ez/스크린샷 2026-06-11 오후 2.18.59.png`
+
+Commands:
+- `swift run ScreenOCRSmoke engine-bench <image> --engine vision --repeats 1`
+- `SCREEN_OCR_OCR_TIMEOUT_MS=60000 SCREEN_OCR_REC_TIMEOUT_S=60 swift run ScreenOCRSmoke engine-bench <image> --engine paddle --repeats 1`
+
+Artifacts:
+- Vision: `artifacts/engine-bench/provided-screenshot-vision-20260611.json`
+- PaddleOCR: `artifacts/engine-bench/provided-screenshot-paddle-20260611.json`
+- stderr logs: `artifacts/engine-bench/provided-screenshot-vision-20260611.stderr.log`, `artifacts/engine-bench/provided-screenshot-paddle-20260611.stderr.log`
+
+| Engine | Request elapsed | Worker init | Line count | Observed text shape |
+| --- | ---: | ---: | ---: | --- |
+| Apple Vision | 4278 ms | n/a | 30 | Keeps paragraph/list grouping closer to the screenshot; still confuses some OCR/product casing such as `OCR` -> `0CR` and `PaddleOCR` casing. |
+| PaddleOCR worker | 7478 ms | 5957 ms | 110 | Produces many small fragments, worse reading-order/spacing, and more casing/character drift on this screenshot. |
+
+Result: Vision is the better engine for this provided screenshot: it is 3200 ms faster for the request and returns a much less fragmented text structure.
+
+Counter-evidence from the same engine-comparison cycle:
+- `fixtures/stage-bench/medium-window.png`: Vision median 788 ms vs PaddleOCR 1241 ms, but Vision introduced English substitutions (`Performance` -> `Pertormance`, `fans` -> `tans`, `def` -> `det`, `five` -> `tive`).
+- `fixtures/stage-bench/single-strip.png`: Vision median 114 ms vs PaddleOCR 366 ms and preserved human-readable spacing better.
+- `fixtures/stage-bench/dense-doc.png`: Vision 1682 ms vs PaddleOCR 2241 ms and preserved numbered-list spacing better in a single run.
+- 20 controlled OCR fixtures through Vision, one repeat each: 20/20 within existing per-fixture thresholds, median CER 0.0, mean CER 0.0031, max CER 0.0625, median elapsed 256 ms.
+
+Decision: Do not replace the default engine yet. Keep PaddleOCR as default and keep Vision as an optional fast engine until a representative real-screen corpus compares both engines with stable quality gates.
