@@ -114,6 +114,16 @@ Adjustment: Treat this as an embedded OCR-resource bundle, not a fully standalon
 
 Status: adopted
 
+### 2026-06-11 Release Trigger Must Follow PR Merge
+
+Observation: Pushing a release tag from a feature branch can publish a release before the PR is merged, which leaves the release target outside the main branch until a later merge.
+
+Evidence: `v0.0.1` was created from `harden-ocr-worker-roundtrip` before PR #1 was merged. The release succeeded, but the healthier project flow is PR validation first, then merge, then release from `main`.
+
+Adjustment: The unsigned release workflow now treats pull requests as validation only. A normal release is triggered by merging a `VERSION` change to `main`; manual dispatch remains available for exceptional rebuilds.
+
+Status: adopted
+
 ### 2026-06-11 Embedded Runtime Must Prove Interpreter Portability
 
 Observation: An embedded OCR bundle can pass module import on the build machine while still pointing its Python wrapper at `/opt/homebrew` or another builder-local interpreter path.

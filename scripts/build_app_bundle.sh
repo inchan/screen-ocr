@@ -6,7 +6,13 @@ cd "$ROOT"
 
 APP_NAME="Screen OCR"
 BUNDLE_ID="dev.screenocr.local"
-APP_VERSION="${SCREEN_OCR_VERSION:-0.0.1}"
+if [[ -n "${SCREEN_OCR_VERSION:-}" ]]; then
+  APP_VERSION="$SCREEN_OCR_VERSION"
+elif [[ -f "VERSION" ]]; then
+  APP_VERSION="$(tr -d '[:space:]' < VERSION)"
+else
+  APP_VERSION="0.0.1"
+fi
 APP_PATH="dist/${APP_NAME}.app"
 CONTENTS_PATH="$APP_PATH/Contents"
 MACOS_PATH="$CONTENTS_PATH/MacOS"
