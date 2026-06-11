@@ -7,20 +7,35 @@ final class SelectionOverlayController {
     private var windows: [NSWindow] = []
     private var continuation: CheckedContinuation<ScreenRegionSelection, Error>?
 
+    /// Whether a selection session is currently on screen. Callers (the hotkey path) skip new
+    /// requests while this is true.
+    var isSelecting: Bool { continuation != nil }
+
     func selectRegion() async throws -> ScreenRegionSelection {
-        try await withCheckedThrowingContinuation { continuation in
+        // A second entry would silently overwrite (and leak) the first continuation and stack
+        // duplicate overlay windows — the first capture would then never complete.
+        guard !isSelecting else {
+            throw SelectionOverlayError.alreadyActive
+        }
+        return try await withCheckedThrowingContinuation { continuation in
             self.continuation = continuation
             self.showOverlayWindows()
         }
     }
 
     private func showOverlayWindows() {
+        // An accessory (LSUIElement) app is not active by default, so its overlay window can
+        // neither become key (no keyDown → Escape can't cancel) nor receive the first click as a
+        // selection (it would be swallowed to activate the app). Activate the app first so the
+        // borderless key-capable window below can take keyboard + first-mouse input.
+        NSApp.activate(ignoringOtherApps: true)
+
         windows = NSScreen.screens.map { screen in
             let view = SelectionOverlayView(screen: screen) { [weak self] result in
                 self?.finish(result)
             }
 
-            let window = NSWindow(
+            let window = OverlayWindow(
                 contentRect: screen.frame,
                 styleMask: .borderless,
                 backing: .buffered,
@@ -37,6 +52,8 @@ final class SelectionOverlayController {
             return window
         }
 
+        // Make the first overlay key so Escape and the first selection click are delivered.
+        windows.first?.makeKey()
         NSCursor.crosshair.set()
     }
 
@@ -59,11 +76,22 @@ final class SelectionOverlayController {
     }
 }
 
+/// A borderless window that can still become key/main. Plain borderless `NSWindow`s return
+/// `false` for both, which blocks keyDown (Escape-to-cancel) and first-click delivery.
+private final class OverlayWindow: NSWindow {
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { true }
+}
+
 private final class SelectionOverlayView: NSView {
     private let screen: NSScreen
     private let completion: (Result<ScreenRegionSelection, Error>) -> Void
     private var dragStart: CGPoint?
     private var dragCurrent: CGPoint?
+
+    // Register the first click even when the app was inactive when the overlay appeared
+    // (e.g. triggered by the global hotkey while another app was frontmost).
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     init(screen: NSScreen, completion: @escaping (Result<ScreenRegionSelection, Error>) -> Void) {
         self.screen = screen
@@ -168,9 +196,13 @@ private final class SelectionOverlayView: NSView {
 
 enum SelectionOverlayError: Error, LocalizedError {
     case cancelled
+    case alreadyActive
 
     var errorDescription: String? {
-        "Selection cancelled"
+        switch self {
+        case .cancelled: "Selection cancelled"
+        case .alreadyActive: "Selection already in progress"
+        }
     }
 }
 

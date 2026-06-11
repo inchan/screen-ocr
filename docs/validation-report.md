@@ -1,10 +1,137 @@
 # Validation Report
 
-Last updated: 2026-06-05.
+Last updated: 2026-06-11.
+
+## 2026-06-11 Cycle: Unsigned embedded release path
+
+Scope: Support distribution without an Apple Developer account while keeping both PaddleOCR and Apple Vision selectable.
+
+Verified on the local macOS host:
+- Embedded runtime build: `SCREEN_OCR_EMBED_RUNTIME=1 SCREEN_OCR_CODESIGN_IDENTITY=- scripts/build_app_bundle.sh` completed and produced `dist/Screen OCR.app`.
+- Embedded runtime verification: `scripts/verify_embedded_runtime_bundle.sh` passed. It verifies PaddleOCR/Paddle/sidecar importability and rejects build-machine Python paths in the embedded wrapper or Python launcher linkage.
+- Signature verification: `scripts/verify_app_signature.sh` passed for the ad-hoc signed app with embedded Python.framework.
+- Embedded fixture smoke: `scripts/run_embedded_fixture_smoke.sh` passed and copied `OCR 테스트\nHello 123`.
+- Full agent gate: `scripts/agent_gate.sh` passed with `AGENT_GATE=PASS`.
+- Local unsigned zip: `dist/release/Screen-OCR-local-unsigned-macos-arm64.zip` was created with SHA-256 sidecar.
+- Bundle size: latest local embedded app bundle is about 853 MB before zip packaging.
+  The local zip is about 246 MB.
+
+Implementation evidence:
+- `scripts/build_app_bundle.sh` now embeds `Contents/Frameworks/Python.framework` in embedded-runtime mode and patches the Python launcher to use the bundled framework.
+- `scripts/sign_app_bundle.sh` explicitly signs the embedded Python framework executables before signing the app bundle.
+- `.github/workflows/unsigned-release.yml` builds/tests pull requests and publishes an ad-hoc signed, non-notarized zip release on tags or manual dispatch.
+- `docs/release-unsigned.md` documents Gatekeeper expectations and the unsigned release contract.
+
+Known verification gap:
+- The GitHub Actions workflow has not run on a hosted macOS runner in this local cycle. Local build, embedded import verification, signature verification, fixture smoke, agent gate, and zip packaging passed.
+
+## 2026-06-11 Cycle: Settings two-pane redesign
+
+Scope: Redesign the settings window into a macOS-style left sidebar and right detail pane. Categories are General, Capture, and Engine. The detail pane starts directly with sectioned form content, uses OS language for settings UI text, keeps save history out of settings, and preserves immediate application of existing controls.
+
+Verified on the local macOS host:
+- Design artifact: `docs/settings-redesign.md` records the category split, layout rules, OS language rule, and General/Capture/Engine ASCII wireframes.
+- Narrow construction smoke: `bash scripts/run_settings_window_layout_smoke.sh` passed. It constructs `SettingsWindowController` with an isolated temp settings file, verifies the resizable two-pane window, sidebar items, General/Capture/Engine page switching, and PaddleOCR section show/hide behavior.
+- Existing custom-control alignment smoke: `bash scripts/run_hotkey_recorder_layout_smoke.sh` passed with `first=17.00` and `last=7.00`.
+- App build: `swift build --product ScreenOCRApp` passed.
+- Full Swift suite: `swift test` passed 28 tests.
+- Agent gate: `scripts/agent_gate.sh` passed with `AGENT_GATE=PASS`, including the new settings window layout smoke, Swift builds, bundle/signature checks, OCR environment check, and 26 Python sidecar tests.
+
+Implementation evidence:
+- `SettingsWindowController` now builds a two-pane settings window with a simple icon sidebar and sectioned form detail pages.
+- The settings categories are General, Capture, and Engine; the former Advanced/debug option is absorbed into General > Display.
+- Settings strings are selected from OS language: Korean for Korean preferred language, English otherwise.
+- Engine page keeps the PaddleOCR worker section visible only when PaddleOCR is selected.
+- `SettingsStore` supports an optional file URL for isolated layout smoke tests; production still uses the default Application Support settings path.
+- `scripts/agent_gate.sh` now runs the settings window layout smoke after Swift tests.
+
+Known verification gap:
+- The smoke validates construction, navigation, and visibility state. It does not yet capture a rendered screenshot for pixel-level visual review.
+
+## 2026-06-11 Cycle: Hotkey settings row alignment
+
+Scope: Align the "캡처 단축키" settings title with the hotkey input field in the AppKit settings grid.
+
+Verified on the local macOS host:
+- Red check before implementation: `bash scripts/run_hotkey_recorder_layout_smoke.sh` failed with `firstBaselineOffsetFromTop: actual=0.00 expected=17.00`, proving the custom recorder view exposed no usable text baseline to `NSGridView`.
+- Narrow layout smoke after implementation: `bash scripts/run_hotkey_recorder_layout_smoke.sh` passed with `first=17.00` and `last=7.00`.
+- Full Swift suite: `swift test` passed 28 tests.
+- Agent gate: `scripts/agent_gate.sh` passed with `AGENT_GATE=PASS`, including the new hotkey recorder layout smoke, Swift app builds, bundle/signature checks, OCR environment check, and 26 Python sidecar tests.
+
+Implementation evidence:
+- `HotkeyRecorderView` now exposes `firstBaselineOffsetFromTop` and `lastBaselineOffsetFromBottom` by forwarding the vertically centered internal label baselines.
+- `scripts/agent_gate.sh` now runs the hotkey recorder layout smoke after `swift test`.
+
+Known verification gap:
+- This proves the custom control baseline contract numerically. It does not capture a screenshot of the full settings window.
+
+## 2026-06-11 Cycle: Settings engine selection and Paddle worker count
+
+Scope: Add settings support for OCR engine selection plus a PaddleOCR-only worker-count setting. `Auto` must preserve the existing CPU-count heuristic; numeric selections must reach the next Paddle worker process. Vision must not be selectable on unsupported platforms.
+
+Verified on the local macOS host:
+- Red check before implementation: `swift test --filter ScreenOCRCoreTests/testPersistentPythonSidecarOCRPassesExplicitRecognitionWorkerCount` failed to compile because `PersistentPythonSidecarOCR` had no `recognitionWorkerCount` initializer yet.
+- Explicit worker count: `swift test --filter ScreenOCRCoreTests/testPersistentPythonSidecarOCRPassesExplicitRecognitionWorkerCount` passed; the fake worker saw `SCREEN_OCR_REC_WORKERS=4`.
+- Auto worker count: `swift test --filter ScreenOCRCoreTests/testPersistentPythonSidecarOCRAutoRecognitionWorkerCountClearsParentEnv` passed; with parent `SCREEN_OCR_REC_WORKERS=9`, the worker still saw `auto` because the Swift client removed the variable for Auto.
+- Full Swift suite: `swift test` passed 28 tests.
+- Agent gate: `scripts/agent_gate.sh` passed with `AGENT_GATE=PASS`, including Swift tests, `ScreenOCRApp`/`ScreenOCRSmoke`/`ScreenOCRFixtureWindow` builds, local app bundle verification, local signature verification, OCR Python environment check, and 26 Python sidecar tests.
+
+Implementation evidence:
+- Settings persist `paddleOCRWorkerCount` as an optional integer; missing/invalid values normalize to `Auto`.
+- The settings window shows a Paddle worker-count popup under the engine popup only when PaddleOCR is selected.
+- `PersistentPythonSidecarOCR` accepts `recognitionWorkerCount`; numeric values set `SCREEN_OCR_REC_WORKERS`, while Auto removes it.
+- The app recreates the cached Paddle worker when the configured worker count changes.
+- Vision availability is normalized through platform checks; unsupported platforms fall back to PaddleOCR and the UI disables the Vision menu item.
+
+Known verification gap:
+- The settings window was compile/gate verified, but no screenshot-based UI harness exists for this AppKit settings form in this cycle.
+
+## 2026-06-11 Cycle: Provided screenshot engine comparison
+
+Scope: Compare Apple Vision and PaddleOCR worker on the user-provided 5044x2130 screenshot, then document whether Vision is ready to replace PaddleOCR as the default.
+
+Verified on the local macOS host:
+- Input metadata: `file` and `sips` confirmed a 5044x2130 PNG.
+- Vision run: `swift run ScreenOCRSmoke engine-bench <image> --engine vision --repeats 1` saved `artifacts/engine-bench/provided-screenshot-vision-20260611.json`.
+- PaddleOCR run: `SCREEN_OCR_OCR_TIMEOUT_MS=60000 SCREEN_OCR_REC_TIMEOUT_S=60 swift run ScreenOCRSmoke engine-bench <image> --engine paddle --repeats 1` saved `artifacts/engine-bench/provided-screenshot-paddle-20260611.json`.
+- Gate after documentation update: `scripts/agent_gate.sh` passed on 2026-06-11 with `AGENT_GATE=PASS` after running Swift tests/builds, bundle verification/signature checks, OCR environment check, and 26 Python sidecar tests.
+
+Engine comparison on the provided screenshot:
+
+| Engine | Request elapsed | Worker init | Line count | Result |
+| --- | ---: | ---: | ---: | --- |
+| Apple Vision | 4278 ms | n/a | 30 | Better line grouping and overall structure on this screenshot. |
+| PaddleOCR worker | 7478 ms | 5957 ms | 110 | More fragmented lines and visibly worse spacing/reading order on this screenshot. |
+
+Interpretation:
+- Vision is the better engine for this specific screenshot.
+- This does not justify changing the default engine yet. In the same comparison cycle, `fixtures/stage-bench/medium-window.png` showed Vision-specific English substitutions (`Performance` -> `Pertormance`, `fans` -> `tans`, `def` -> `det`, `five` -> `tive`).
+- Decision log updated: D-0018 keeps PaddleOCR as default and treats Vision as an optional fast engine pending a representative corpus.
+- Performance analysis updated: H7 records this screenshot result plus counter-evidence from fixture comparisons.
+
+Known verification gap:
+- The provided screenshot has no exact expected transcript, so this comparison is qualitative for text structure and relative speed. It is not a CER proof.
+
+## 2026-06-08 Cycle: Worker round-trip hardening (timeout, slim payload, opt-in filter)
+
+Scope: D-0017 — buffered worker reads + hard request timeout (Swift), slim worker payload and opt-in low-score line filter (Python).
+
+Verified in this environment (Linux web container; `swift` is not installed here):
+- Python sidecar tests: `scripts/run_python_tests.sh` → 18 tests OK (5 new: min-score filter on/default, slim `{text, score}` worker payload, env-driven filter, invalid-env fallback). Baseline before this cycle was 13 tests.
+- `python3 -m py_compile` of `worker.py` and `ocr.py`: OK.
+- Defaults preserved: with `SCREEN_OCR_MIN_LINE_SCORE` unset, recognized text and line count are unchanged (covered by `test_recognize_image_keeps_all_lines_when_min_score_is_default` and the unchanged existing contract tests).
+- Test-runner portability fix: `scripts/run_python_tests.sh` now falls back to `python3` when neither `.venv-ocr` nor `python3.12` is present, so sidecar tests run in the web container.
+
+Not verified in this environment (requires a macOS host with the Swift toolchain):
+- `swift test` for `ScreenOCRCoreTests`, including the new `testPersistentPythonSidecarOCRTimesOutWhenWorkerHangs` (R1) and the existing persistent-worker tests that also cover the slim `{text, score}` payload shape.
+- `swift build` for `ScreenOCRApp`, `ScreenOCRSmoke`, `ScreenOCRFixtureWindow`.
+- The Swift-dependent portions of `scripts/agent_gate.sh` (swift test/build, `.app` bundle build/sign) and `scripts/run_ocr_fixture_benchmark.py` against the real PaddleOCR runtime.
+
+Next verification step (macOS host): run `swift test`, `swift build --product ScreenOCRApp`, `scripts/agent_gate.sh`, and a 7-repeat `scripts/run_ocr_fixture_benchmark.py` to confirm 20/20 and that warm median stays at or below the recorded 281.285 ms.
 
 ## Current Claim
 
-The repository has an autonomous operating-system layer, a tested core OCR pipeline, a local PaddleOCR sidecar, a local `.app` bundle build, and a macOS menu bar utility whose scripted end-to-end smoke verifies `Cmd+Shift+0` -> drag selection -> ScreenCaptureKit capture -> PaddleOCR -> clipboard. On successful clipboard copy, the app now shows a transient `📋 Copied to clipboard` toast anchored below the menu bar item.
+The repository has an autonomous operating-system layer, a tested core OCR pipeline, a local PaddleOCR sidecar, an optional Apple Vision OCR engine, a local `.app` bundle build, and a macOS menu bar utility whose scripted end-to-end smoke verifies `Cmd+Shift+0` -> drag selection -> ScreenCaptureKit capture -> OCR -> clipboard. PaddleOCR remains the default engine; Apple Vision is selectable for fast in-process OCR while its default-replacement quality gate remains open.
 
 ## Evidence To Collect
 
@@ -185,5 +312,6 @@ Controlled OCR fixture benchmark:
 - macOS 14 fallback is implemented and forced-smoke verified on the local host; it still needs a real macOS 14 host smoke before release.
 - Local development `.app` bundling, ad-hoc signing, and embedded OCR-resource bundling are implemented; Developer ID signing, notarization, stapling, and a fully standalone Python framework/interpreter bundle are not implemented.
 - Product-readiness still needs real representative screen crops; the current 20-image corpus is controlled/synthetic and useful for regression, not a substitute for real app screenshots.
+- Apple Vision is promising on the provided dense screenshot, but default replacement still needs a representative real-screen corpus with exact expected text and per-engine CER thresholds.
 - Hotkey smoke now records selection, image capture, OCR worker, clipboard, post-selection-to-clipboard, worker startup, and worker RSS timings. The remaining performance gap is representative real-screen validation beyond the controlled two-line fixture.
 - Local default `python3` is 3.14.5; scripts intentionally use `python3.12` for the PaddleOCR runtime.

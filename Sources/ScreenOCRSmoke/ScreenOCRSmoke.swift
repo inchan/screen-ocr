@@ -9,9 +9,16 @@ import UniformTypeIdentifiers
 @main
 struct ScreenOCRSmoke {
     static func main() async {
-        let runner = ScreenSmokeRunner()
-        let status = await runner.run()
-        exit(status)
+        let args = CommandLine.arguments.dropFirst() // drop executable name
+        if let firstArg = args.first, firstArg == "engine-bench" {
+            let remainingArgs = Array(args.dropFirst())
+            let status = await EngineBenchCommand.run(args: remainingArgs)
+            exit(status)
+        } else {
+            let runner = ScreenSmokeRunner()
+            let status = await runner.run()
+            exit(status)
+        }
     }
 }
 
@@ -198,14 +205,6 @@ private final class SmokeFixtureView: NSView {
     }
 }
 
-private final class PasteboardClipboard: ClipboardWriting {
-    func writeText(_ text: String) throws {
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        pasteboard.setString(text, forType: .string)
-    }
-}
-
 private enum SmokeError: Error, LocalizedError {
     case emptyImage
     case cannotCreateImageDestination
@@ -220,5 +219,161 @@ private enum SmokeError: Error, LocalizedError {
         case .cannotWriteImage:
             return "Could not write smoke PNG"
         }
+    }
+}
+
+// MARK: - engine-bench subcommand
+
+private enum BenchEngine: String {
+    case vision
+    case paddle
+    case both
+}
+
+private enum EngineBenchError: Error, LocalizedError {
+    case missingImagePath
+    case unknownEngine(String)
+    case invalidRepeats(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .missingImagePath:
+            return "engine-bench requires <image-path> as first argument"
+        case .unknownEngine(let s):
+            return "Unknown engine '\(s)'. Use: vision, paddle, or both"
+        case .invalidRepeats(let s):
+            return "Invalid --repeats value '\(s)'. Must be a positive integer"
+        }
+    }
+}
+
+private enum EngineBenchCommand {
+    static func run(args: [String]) async -> Int32 {
+        do {
+            let (imagePath, engine, repeats) = try parseArgs(args)
+            let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+            let result = try await runBench(imagePath: imagePath, engine: engine, repeats: repeats, root: root)
+            let data = try JSONSerialization.data(withJSONObject: result, options: [.prettyPrinted, .sortedKeys])
+            print(String(data: data, encoding: .utf8) ?? "")
+            return 0
+        } catch {
+            fputs("engine-bench error: \(error.localizedDescription)\n", stderr)
+            fputs("Usage: engine-bench <image-path> [--engine vision|paddle|both] [--repeats N]\n", stderr)
+            return 1
+        }
+    }
+
+    private static func parseArgs(_ args: [String]) throws -> (imagePath: String, engine: BenchEngine, repeats: Int) {
+        var imagePath: String?
+        var engine = BenchEngine.vision
+        var repeats = 3
+        var i = 0
+        while i < args.count {
+            let arg = args[i]
+            switch arg {
+            case "--engine":
+                i += 1
+                guard i < args.count else { throw EngineBenchError.unknownEngine("(missing)") }
+                guard let e = BenchEngine(rawValue: args[i]) else { throw EngineBenchError.unknownEngine(args[i]) }
+                engine = e
+            case "--repeats":
+                i += 1
+                guard i < args.count, let n = Int(args[i]), n > 0 else {
+                    throw EngineBenchError.invalidRepeats(i < args.count ? args[i] : "(missing)")
+                }
+                repeats = n
+            default:
+                if !arg.hasPrefix("-") {
+                    imagePath = arg
+                }
+            }
+            i += 1
+        }
+        guard let path = imagePath else { throw EngineBenchError.missingImagePath }
+        return (path, engine, repeats)
+    }
+
+    private static func runBench(
+        imagePath: String,
+        engine: BenchEngine,
+        repeats: Int,
+        root: URL
+    ) async throws -> [String: Any] {
+        let image = CapturedImage(
+            id: "bench://\(URL(fileURLWithPath: imagePath).lastPathComponent)",
+            width: 0,
+            height: 0,
+            filePath: imagePath
+        )
+
+        switch engine {
+        case .vision:
+            let result = try await benchVision(image: image, repeats: repeats)
+            return ["vision": result]
+        case .paddle:
+            let result = try await benchPaddle(image: image, repeats: repeats, root: root)
+            return ["paddle": result]
+        case .both:
+            let visionResult = try await benchVision(image: image, repeats: repeats)
+            let paddleResult = try await benchPaddle(image: image, repeats: repeats, root: root)
+            return ["vision": visionResult, "paddle": paddleResult]
+        }
+    }
+
+    private static func benchVision(image: CapturedImage, repeats: Int) async throws -> [String: Any] {
+        let engine = VisionOCREngine()
+        var elapsedAll: [Int] = []
+        var lastDocument: OCRDocument?
+        for _ in 0..<repeats {
+            let start = Date()
+            let doc = try await engine.recognizeText(in: image)
+            elapsedAll.append(elapsedMilliseconds(since: start))
+            lastDocument = doc
+        }
+        let doc = lastDocument ?? OCRDocument(lines: [])
+        return makeResult(elapsedAll: elapsedAll, document: doc)
+    }
+
+    private static func benchPaddle(image: CapturedImage, repeats: Int, root: URL) async throws -> [String: Any] {
+        let ocr = PersistentPythonSidecarOCR(
+            pythonExecutablePath: root.appendingPathComponent(".venv-ocr/bin/python").path,
+            sidecarPath: root.appendingPathComponent("sidecar").path
+        )
+        let prewarmStart = Date()
+        let readyInfo = try await ocr.prewarm()
+        let initElapsedMs = elapsedMilliseconds(since: prewarmStart)
+
+        var elapsedAll: [Int] = []
+        var lastDocument: OCRDocument?
+        for _ in 0..<repeats {
+            let start = Date()
+            let doc = try await ocr.recognizeText(in: image)
+            elapsedAll.append(elapsedMilliseconds(since: start))
+            lastDocument = doc
+        }
+        let doc = lastDocument ?? OCRDocument(lines: [])
+        var result = makeResult(elapsedAll: elapsedAll, document: doc)
+        result["init_elapsed_ms"] = initElapsedMs
+        result["worker_init_elapsed_ms"] = readyInfo.initElapsedMs
+        return result
+    }
+
+    private static func makeResult(elapsedAll: [Int], document: OCRDocument) -> [String: Any] {
+        [
+            "elapsed_ms_all": elapsedAll,
+            "median": medianInt(elapsedAll),
+            "line_count": document.lines.count,
+            "text": document.normalizedText,
+        ]
+    }
+
+    private static func medianInt(_ values: [Int]) -> Int {
+        guard !values.isEmpty else { return 0 }
+        let sorted = values.sorted()
+        let mid = sorted.count / 2
+        if sorted.count % 2 == 0 {
+            return (sorted[mid - 1] + sorted[mid]) / 2
+        }
+        return sorted[mid]
     }
 }

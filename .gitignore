@@ -17,3 +17,9 @@ dist/
 
 # Browser MCP runtime artifacts
 .playwright-mcp/
+
+# Generated stage-bench fixtures (bench_stage.py regenerates them)
+fixtures/stage-bench/
+
+# Claude Code onboarding artifact (personal usage stats)
+ONBOARDING.md

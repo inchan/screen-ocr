@@ -114,6 +114,16 @@ Adjustment: Treat this as an embedded OCR-resource bundle, not a fully standalon
 
 Status: adopted
 
+### 2026-06-11 Embedded Runtime Must Prove Interpreter Portability
+
+Observation: An embedded OCR bundle can pass module import on the build machine while still pointing its Python wrapper at `/opt/homebrew` or another builder-local interpreter path.
+
+Evidence: The pre-existing embedded runtime wrapper executed `/opt/homebrew/opt/python@3.12/bin/python3.12`. After updating `scripts/build_app_bundle.sh`, the bundle includes `Contents/Frameworks/Python.framework`, patches the Python launcher dependency to `@executable_path/../Python`, and `scripts/verify_embedded_runtime_bundle.sh` rejects wrappers or linked libraries that point at build-machine Python paths.
+
+Adjustment: Embedded runtime verification must check both importability and portability: no build-machine Python path in the wrapper or Python launcher linkage.
+
+Status: adopted
+
 ### 2026-06-05 Signature Preservation After OCR
 
 Observation: Even after a bundle signs cleanly, running embedded Python can mutate sealed resources by creating `__pycache__` files inside the app bundle.
@@ -191,5 +201,35 @@ Observation: A crop that is visually correct can still be too tight for PaddleOC
 Evidence: The first large-empty auto-trim used 32 px padding and reduced the image to 267x158, but OCR latency regressed from 385.425 ms to 444.606 ms and text split into `OCR`, `테스트`, `Hello`, `123`. A padding probe showed 64 px preserved `OCR테스트\nHello 123` and improved the benchmark to 397.901 ms -> 267.591 ms.
 
 Adjustment: Default auto-trim padding is 64 px, and future preprocessing changes must verify OCR text plus latency, not only crop size.
+
+Status: adopted
+
+### 2026-06-08 Swift Toolchain Absent In Web Container
+
+Observation: The Claude Code web execution container is Linux without `swift`, so `swift test`, `swift build`, and the Swift-dependent half of `scripts/agent_gate.sh` cannot run there. Swift changes made in a web session are unverified until a macOS host runs them.
+
+Evidence: `command -v swift` returned nothing in the container for the D-0017 cycle; only `python3`/`python3.12`/`ruby` were available. Python sidecar tests passed (18/18), but the Swift timeout/buffered-reader changes could only be syntax-reviewed, not compiled. Separately, `scripts/run_python_tests.sh` defaulted to `python3.12`, which exists in this container but lacked Pillow, while the bare fallback needed to be `python3`.
+
+Adjustment: (1) `scripts/run_python_tests.sh` now falls back to `python3` when `.venv-ocr` and `python3.12` are absent, so sidecar tests run in the web container. (2) Validation reports written from a web session must explicitly separate "verified here" from "needs a macOS host," and must not claim Swift gates pass without a macOS run.
+
+Status: adopted
+
+### 2026-06-11 Engine Comparison Needs Ground Truth
+
+Observation: A single real screenshot can strongly favor one OCR engine on speed and text structure, but it cannot justify a default-engine change without exact expected text.
+
+Evidence: On the user-provided 5044x2130 screenshot, Apple Vision returned 30 lines in 4278 ms while PaddleOCR returned 110 fragmented lines in 7478 ms after a 5957 ms worker init. The result favors Vision for that image. The same comparison cycle still found Vision-specific substitutions on `fixtures/stage-bench/medium-window.png` (`Performance` -> `Pertormance`, `fans` -> `tans`, `def` -> `det`, `five` -> `tive`), and the provided screenshot has no exact transcript for CER.
+
+Adjustment: Keep qualitative real-screenshot comparisons in `docs/performance-analysis.md`, but require a representative real-screen corpus with exact expected text before changing the default OCR engine.
+
+Status: adopted
+
+### 2026-06-11 Settings UI Needs AppKit Harness
+
+Observation: Settings UI changes can be compile-verified through `swift test`/`agent_gate`, but the project has no automated way to assert that a specific AppKit settings row is visible/enabled/disabled after launch.
+
+Evidence: The Paddle worker-count setting cycle verified the underlying worker environment behavior and built `ScreenOCRApp`, but `docs/validation-report.md` still had to list screenshot-based settings-window verification as a known gap.
+
+Adjustment: Add a lightweight settings-window smoke harness before relying on visual settings changes as fully verified. Adopted slices: `scripts/run_hotkey_recorder_layout_smoke.sh` verifies the custom hotkey recorder baselines; `scripts/run_settings_window_layout_smoke.sh` constructs the full settings window and verifies sidebar navigation plus PaddleOCR section visibility.
 
 Status: adopted

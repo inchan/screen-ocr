@@ -1,6 +1,6 @@
 # OCR Performance Analysis
 
-Last updated: 2026-06-05.
+Last updated: 2026-06-11.
 
 ## Evaluation Contract
 
@@ -208,3 +208,75 @@ Small controlled hotkey smoke after this change:
 - OCR text: `OCR테스트\nHello 123`.
 
 Status: accepted for mostly-empty large selections. Real-world large screenshots still need a representative corpus because non-uniform backgrounds may correctly fall back instead of trimming.
+
+### H6: First-request pool-warm penalty + dead-worker cold start (2026-06-10)
+
+User-reported 17s (app-reported `ocr_elapsed_ms` 14,584) for a 2504x2186 half-screen
+capture with 51 lines, while the warm production path runs the same image in ~4.8s.
+Decomposition of the gap (`scripts/bench_real_capture.py` on the original TIFF):
+
+| Window | Measured |
+| --- | ---: |
+| worker init (`load_ocr`) | 4.7-5.1 s |
+| first request immediately after init | 10,279 ms |
+| warm e2e median | 4,832 ms (recognize 4,485 ms = 84%) |
+
+Two compounding causes:
+1. `mp.Pool` returns before its children finish importing paddlex and loading the
+   recognizer, but the worker printed `ready` right away — so the *first* request
+   silently absorbed the children's model loads (~5.5s on top of the warm path).
+2. The launch-prewarmed worker had died unobserved (cause unknown; nothing respawned
+   it), so the user's request also paid the full worker spawn.
+
+Fixes:
+- `parallel_rec.py`: per-child init-completion counter (`mp.Value` via initargs) and
+  `RecognizerPool.wait_until_warm()`; `worker.load_ocr` spawns the pool first so the
+  children's model loads overlap the parent's detector construction, then blocks until
+  every child is warm. "ready" now means actually warm.
+- `main.swift`: a 10s worker-liveness watchdog re-prewarms whenever the worker process
+  is gone, so a hotkey press always finds a live, warm worker (verified by SIGKILLing
+  the worker: auto-respawned and ready within ~25s, no orphaned children).
+
+Validator (`.omx/specs/autoresearch-ocr-7s-real/validate.py`, gate <7,000 ms with
+identical accuracy on the real capture):
+
+| Metric | Before | After |
+| --- | ---: | ---: |
+| cold-exposed first request | 10,279 ms | 5,135 ms |
+| warm median | 4,832 ms | 4,340 ms |
+| line count / anchor tokens | 51 / 100% | 51 / 100% |
+
+Status: accepted. Worker init grew 4.7s -> ~5.7-6.9s (it now includes child warm-up),
+but that cost is paid at app launch / watchdog respawn, never by a user request.
+
+### H7: Apple Vision as a replacement candidate for dense real screenshots (2026-06-11)
+
+Hypothesis: Apple Vision may be a better default OCR engine for dense real screenshots because it runs in-process, avoids Python worker startup, and may preserve visual line grouping better than the PaddleOCR worker path.
+
+Input:
+- user-provided screenshot from 2026-06-11, 5044x2130 PNG, dark terminal-style text.
+- source path at run time: `/var/folders/hk/_bsgvvsn3rv78ysh2_cc5_wr0000gn/T/TemporaryItems/NSIRD_screencaptureui_iFn1ez/스크린샷 2026-06-11 오후 2.18.59.png`
+
+Commands:
+- `swift run ScreenOCRSmoke engine-bench <image> --engine vision --repeats 1`
+- `SCREEN_OCR_OCR_TIMEOUT_MS=60000 SCREEN_OCR_REC_TIMEOUT_S=60 swift run ScreenOCRSmoke engine-bench <image> --engine paddle --repeats 1`
+
+Artifacts:
+- Vision: `artifacts/engine-bench/provided-screenshot-vision-20260611.json`
+- PaddleOCR: `artifacts/engine-bench/provided-screenshot-paddle-20260611.json`
+- stderr logs: `artifacts/engine-bench/provided-screenshot-vision-20260611.stderr.log`, `artifacts/engine-bench/provided-screenshot-paddle-20260611.stderr.log`
+
+| Engine | Request elapsed | Worker init | Line count | Observed text shape |
+| --- | ---: | ---: | ---: | --- |
+| Apple Vision | 4278 ms | n/a | 30 | Keeps paragraph/list grouping closer to the screenshot; still confuses some OCR/product casing such as `OCR` -> `0CR` and `PaddleOCR` casing. |
+| PaddleOCR worker | 7478 ms | 5957 ms | 110 | Produces many small fragments, worse reading-order/spacing, and more casing/character drift on this screenshot. |
+
+Result: Vision is the better engine for this provided screenshot: it is 3200 ms faster for the request and returns a much less fragmented text structure.
+
+Counter-evidence from the same engine-comparison cycle:
+- `fixtures/stage-bench/medium-window.png`: Vision median 788 ms vs PaddleOCR 1241 ms, but Vision introduced English substitutions (`Performance` -> `Pertormance`, `fans` -> `tans`, `def` -> `det`, `five` -> `tive`).
+- `fixtures/stage-bench/single-strip.png`: Vision median 114 ms vs PaddleOCR 366 ms and preserved human-readable spacing better.
+- `fixtures/stage-bench/dense-doc.png`: Vision 1682 ms vs PaddleOCR 2241 ms and preserved numbered-list spacing better in a single run.
+- 20 controlled OCR fixtures through Vision, one repeat each: 20/20 within existing per-fixture thresholds, median CER 0.0, mean CER 0.0031, max CER 0.0625, median elapsed 256 ms.
+
+Decision: Do not replace the default engine yet. Keep PaddleOCR as default and keep Vision as an optional fast engine until a representative real-screen corpus compares both engines with stable quality gates.

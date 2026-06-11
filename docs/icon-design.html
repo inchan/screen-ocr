@@ -1,0 +1,664 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Screen OCR Icon Concepts</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%2318201d'/%3E%3Cpath d='M16 22V14h8M40 14h8v8M48 40v8h-8M24 48h-8v-8' fill='none' stroke='%23fffefa' stroke-width='4' stroke-linecap='round'/%3E%3Cpath d='M22 30h20M22 39h14' fill='none' stroke='%232f7d48' stroke-width='4' stroke-linecap='round'/%3E%3C/svg%3E">
+  <style>
+    :root {
+      color-scheme: light;
+      --page: #f7f8f4;
+      --ink: #18201d;
+      --muted: #58615d;
+      --line: #d9ded4;
+      --paper: #fffefa;
+      --shadow: 0 18px 48px rgba(24, 32, 29, 0.10);
+      --radius: 8px;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-width: 320px;
+      background:
+        linear-gradient(180deg, rgba(255, 254, 250, 0.95), rgba(247, 248, 244, 1) 360px),
+        var(--page);
+      color: var(--ink);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      letter-spacing: 0;
+    }
+
+    header,
+    main {
+      width: min(1180px, calc(100vw - 32px));
+      margin: 0 auto;
+    }
+
+    header {
+      padding: 44px 0 24px;
+      display: grid;
+      gap: 12px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    h1,
+    h2,
+    h3,
+    p {
+      margin: 0;
+    }
+
+    h1 {
+      font-size: clamp(30px, 4vw, 52px);
+      line-height: 1.02;
+      font-weight: 760;
+    }
+
+    .summary {
+      max-width: 760px;
+      color: var(--muted);
+      font-size: 16px;
+      line-height: 1.65;
+    }
+
+    main {
+      padding: 26px 0 56px;
+      display: grid;
+      gap: 36px;
+    }
+
+    section {
+      display: grid;
+      gap: 16px;
+    }
+
+    .section-head {
+      display: flex;
+      align-items: end;
+      justify-content: space-between;
+      gap: 16px;
+      padding-top: 8px;
+    }
+
+    h2 {
+      font-size: 22px;
+      line-height: 1.2;
+      font-weight: 720;
+    }
+
+    .count {
+      color: var(--muted);
+      font-size: 13px;
+      white-space: nowrap;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(196px, 1fr));
+      gap: 14px;
+    }
+
+    .icon-card {
+      min-height: 256px;
+      padding: 14px;
+      display: grid;
+      grid-template-rows: auto auto 1fr;
+      gap: 12px;
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+    }
+
+    .icon-frame {
+      width: 100%;
+      aspect-ratio: 1;
+      display: grid;
+      place-items: center;
+      background: #f4f6f2;
+      border: 1px solid #e2e7df;
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+
+    svg {
+      width: min(82%, 150px);
+      height: auto;
+      display: block;
+    }
+
+    h3 {
+      font-size: 15px;
+      line-height: 1.25;
+      font-weight: 690;
+    }
+
+    .icon-card p {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .eastern .icon-frame {
+      background: #f8f7f0;
+    }
+
+    .french .icon-frame {
+      background: #f7f8fb;
+    }
+
+    .simple .icon-frame {
+      background: #f9faf8;
+    }
+
+    .stroke {
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 6;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .thin {
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 4;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .fine {
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 2.5;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .fill {
+      fill: currentColor;
+    }
+
+    .ink {
+      color: #202622;
+    }
+
+    .seal {
+      color: #bd3e2f;
+    }
+
+    .jade {
+      color: #2d7a68;
+    }
+
+    .gold {
+      color: #c8922d;
+    }
+
+    .blue {
+      color: #2f5f9f;
+    }
+
+    .rose {
+      color: #d45162;
+    }
+
+    .violet {
+      color: #6651a7;
+    }
+
+    .green {
+      color: #2f7d48;
+    }
+
+    @media (max-width: 680px) {
+      header {
+        padding-top: 32px;
+      }
+
+      .section-head {
+        align-items: start;
+        flex-direction: column;
+        gap: 6px;
+      }
+
+      .grid {
+        grid-template-columns: repeat(auto-fit, minmax(148px, 1fr));
+      }
+
+      .icon-card {
+        min-height: 238px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Screen OCR 아이콘 콘셉트</h1>
+    <p class="summary">스크린 영역 선택, 이미지 인식, 텍스트 추출, 클립보드 복사를 상징하는 30개 SVG 아이콘 초안입니다. 동양철학, 프랑스 미술 교수, 심플 이즈 베스트 관점별로 10개씩 구성했습니다.</p>
+  </header>
+
+  <main>
+    <section class="eastern" aria-labelledby="eastern-title">
+      <div class="section-head">
+        <h2 id="eastern-title">동양철학 관점</h2>
+        <span class="count">10 concepts</span>
+      </div>
+      <div class="grid">
+        <article class="icon-card">
+          <div class="icon-frame">
+            <svg viewBox="0 0 128 128" role="img" aria-label="Enso Capture">
+              <path class="stroke ink" d="M89 25c18 12 21 39 7 59-16 23-52 25-70 6-16-18-11-49 12-62 17-10 39-9 51-3" opacity=".92"/>
+              <path class="thin jade" d="M31 45v-12h12M85 33h12v12M97 83v12H85M43 95H31V83"/>
+              <path class="thin seal" d="M45 58h38M45 72h30"/>
+            </svg>
+          </div>
+          <h3>여백의 원</h3>
+          <p>일필휘지 원 안에 선택 영역과 추출된 글줄을 겹친 절제형 아이콘.</p>
+        </article>
+
+        <article class="icon-card">
+          <div class="icon-frame">
+            <svg viewBox="0 0 128 128" role="img" aria-label="Yin Yang Lens">
+              <circle class="thin ink" cx="64" cy="58" r="34"/>
+              <path class="fill ink" d="M64 24c18 0 34 15 34 34 0 18-16 34-34 34 10-8 12-18 0-34-12-16-10-26 0-34Z" opacity=".88"/>
+              <circle class="fill jade" cx="64" cy="42" r="5"/>
+              <circle class="fill seal" cx="64" cy="75" r="5"/>
+              <path class="stroke gold" d="M87 83l19 19"/>
+              <path class="fine seal" d="M28 58h72" opacity=".8"/>
+            </svg>
+          </div>
+          <h3>음양 렌즈</h3>
+          <p>캡처와 인식을 한 번의 균형 잡힌 관찰로 묶은 렌즈 심볼.</p>
+        </article>
+
+        <article class="icon-card">
+          <div class="icon-frame">
+            <svg viewBox="0 0 128 128" role="img" aria-label="Seal Clipboard">
+              <rect class="thin ink" x="34" y="22" width="60" height="84" rx="8"/>
+              <path class="thin ink" d="M51 22h26l4 12H47l4-12Z"/>
+              <rect class="fill seal" x="46" y="45" width="36" height="36" rx="3" opacity=".9"/>
+              <path class="fine" style="color:#fffefa" d="M55 56h18M55 66h12M72 56v18"/>
+              <path class="thin jade" d="M45 91h38"/>
+            </svg>
+          </div>
+          <h3>인장 클립보드</h3>
+          <p>텍스트 복사 완료를 낙관처럼 찍는 메뉴 바 앱 아이콘 방향.</p>
+        </article>
+
+        <article class="icon-card">
+          <div class="icon-frame">
+            <svg viewBox="0 0 128 128" role="img" aria-label="Bamboo Columns">
+              <path class="stroke jade" d="M38 22v84M62 18v88M87 25v78"/>
+              <path class="fine ink" d="M30 42h18M54 39h17M79 46h16M30 72h18M54 69h17M79 76h16"/>
+              <path class="thin seal" d="M27 30v-9h9M101 21h9v9M110 98v9h-9M36 107h-9v-9"/>
+            </svg>
+          </div>
+          <h3>죽간 스캔</h3>
+          <p>세로 리듬과 가로 OCR 라인을 결합한 차분한 지식 추출 표식.</p>
+        </article>
+
+        <article class="icon-card">
+          <div class="icon-frame">
+            <svg viewBox="0 0 128 128" role="img" aria-label="Moon Scanner">
+              <path class="fill gold" d="M78 23c-15 9-24 24-22 40 2 17 15 31 33 36-8 5-18 7-28 5-26-4-43-29-38-55 5-25 29-42 55-26Z" opacity=".9"/>
+              <path class="thin ink" d="M44 55h49M41 69h37M48 83h29"/>
+              <path class="thin seal" d="M30 36v-12h12M88 24h12v12"/>
+            </svg>
+          </div>
+          <h3>달빛 판독</h3>
+          <p>어두운 화면 속 글자를 달빛처럼 드러내는 스캔 메타포.</p>
+        </article>
+
+        <article class="icon-card">
+          <div class="icon-frame">
+            <svg viewBox="0 0 128 128" role="img" aria-label="Five Element Frame">
+              <path class="thin ink" d="M64 18l41 30-16 49H39L23 48 64 18Z"/>
+              <circle class="fill seal" cx="64" cy="18" r="5"/>
+              <circle class="fill jade" cx="105" cy="48" r="5"/>
+              <circle class="fill gold" cx="89" cy="97" r="5"/>
+              <circle class="fill blue" cx="39" cy="97" r="5"/>
+              <circle class="fill ink" cx="23" cy="48" r="5"/>
+              <path class="thin ink" d="M44 51h40M44 65h40M44 79h26"/>
+            </svg>
+          </div>
+          <h3>오행 프레임</h3>
+          <p>캡처, 이미지, 인식, 텍스트, 클립보드 단계를 다섯 점으로 압축.</p>
+        </article>
+
+        <article class="icon-card">
+          <div class="icon-frame">
+            <svg viewBox="0 0 128 128" role="img" aria-label="Empty Center">
+              <rect class="thin ink" x="24" y="24" width="80" height="80" rx="8"/>
+              <rect x="42" y="42" width="44" height="44" rx="22" fill="#f8f7f0"/>
+              <path class="thin jade" d="M35 39h30M35 54h16M77 54h16M63 74h30M35 89h58"/>
+              <path class="stroke seal" d="M52 64h24" opacity=".85"/>
+            </svg>
+          </div>
+          <h3>비움의 중심</h3>
+          <p>중앙 여백으로 화면의 잡음을 비우고 필요한 글줄만 남기는 방향.</p>
+        </article>
+
+        <article class="icon-card">
+          <div class="icon-frame">
+            <svg viewBox="0 0 128 128" role="img" aria-label="Mountain Region">
+              <path class="thin ink" d="M27 31v-10h10M91 21h10v10M101 91v10H91M37 101H27V91"/>
+              <path class="fill jade" d="M28 86l25-31 17 21 12-15 22 25H28Z" opacity=".88"/>
+              <path class="fine" style="color:#fffefa" d="M50 80h35M58 68h20"/>
+              <path class="thin seal" d="M38 107h52"/>
+            </svg>
+          </div>
+          <h3>산수 영역</h3>
+          <p>이미지 영역을 산수의 층처럼 보고 텍스트만 골라내는 콘셉트.</p>
+        </article>
+
+        <article class="icon-card">
+          <div class="icon-frame">
+            <svg viewBox="0 0 128 128" role="img" aria-label="Trigram Reader">
+              <path class="stroke ink" d="M37 34h54M37 52h21M70 52h21M37 70h54"/>
+              <circle class="thin jade" cx="66" cy="71" r="25"/>
+              <path class="stroke seal" d="M84 89l18 18"/>
+              <path class="fine gold" d="M45 90h33"/>
+            </svg>
+          </div>
+          <h3>괘의 판독</h3>
+          <p>끊김과 이어짐의 막대를 OCR 라인 인식으로 재해석한 심볼.</p>
+        </article>
+
+        <article class="icon-card">
+          <div class="icon-frame">
+            <svg viewBox="0 0 128 128" role="img" aria-label="Ink Ripple">
+              <circle class="fine jade" cx="64" cy="64" r="42" opacity=".45"/>
+              <circle class="fine jade" cx="64" cy="64" r="28" opacity=".7"/>
+              <circle class="fill ink" cx="64" cy="64" r="7"/>
+              <path class="thin seal" d="M38 51h52M42 78h44"/>
+              <path class="thin ink" d="M25 38v-11h11M92 27h11v11M103 90v11H92M36 101H25V90"/>
+            </svg>
+          </div>
+          <h3>먹물 파문</h3>
+          <p>작은 선택이 텍스트 결과로 번지는 순간을 파문으로 표현.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="french" aria-labelledby="french-title">
+      <div class="section-head">
+        <h2 id="french-title">프랑스 미술 교수 관점</h2>
+        <span class="count">10 concepts</span>
+      </div>
+      <div class="grid">
+        <article class="icon-card">
+          <div class="icon-frame">
+            <svg viewBox="0 0 128 128" role="img" aria-label="Impression Scan">
+              <path class="thin blue" d="M26 37v-12h12M90 25h12v12M102 90v12H90M38 102H26V90"/>
+              <circle class="fill blue" cx="48" cy="53" r="7" opacity=".72"/>
+              <circle class="fill rose" cx="66" cy="48" r="6" opacity=".72"/>
+              <circle class="fill gold" cx="80" cy="64" r="8" opacity=".74"/>
+              <circle class="fill green" cx="55" cy="74" r="6" opacity=".72"/>
+              <path class="thin ink" d="M42 91h46"/>
+            </svg>
+          </div>
+          <h3>인상주의 스캔</h3>
+          <p>빛의 점을 읽을 수 있는 글줄로 정리하는 부드러운 OCR 표식.</p>
+        </article>
+
+        <article class="icon-card">
+          <div class="icon-frame">
+            <svg viewBox="0 0 128 128" role="img" aria-label="Cubist OCR">
+              <path class="fill blue" d="M28 34l31-12 12 34-32 9Z" opacity=".78"/>
+              <path class="fill rose" d="M71 23l28 21-17 24-25-12Z" opacity=".78"/>
+              <path class="fill gold" d="M39 66l33-10 15 33-39 14Z" opacity=".78"/>
+              <path class="thin ink" d="M36 82h39M42 96h30"/>
+              <path class="thin ink" d="M25 28v-9h9M94 21h9v9M103 94v9h-9M34 103h-9v-9"/>
+            </svg>
+          </div>
+          <h3>입체파 판독</h3>
+          <p>쪼개진 화면 조각을 다시 텍스트 질서로 맞추는 구성.</p>
+        </article>
+
+        <article class="icon-card">
+          <div class="icon-frame">
+            <svg viewBox="0 0 128 128" role="img" aria-label="Salon Frame">
+              <rect class="thin ink" x="26" y="24" width="76" height="72" rx="4"/>
+              <rect class="fine gold" x="34" y="32" width="60" height="39" rx="2"/>
+              <path class="fill rose" d="M40 64l14-17 12 13 9-10 14 14H40Z" opacity=".75"/>
+              <path class="thin blue" d="M42 82h44M49 91h30"/>
+            </svg>
+          </div>
+          <h3>살롱 라벨</h3>
+          <p>그림 아래 작품 설명처럼 화면 속 문자를 단정하게 추출.</p>
+        </article>
+
+        <article class="icon-card">
+          <div class="icon-frame">
+            <svg viewBox="0 0 128 128" role="img" aria-label="Atelier Loupe">
+              <path class="stroke rose" d="M28 83c19-25 42-34 72-28" opacity=".82"/>
+              <circle class="thin blue" cx="59" cy="58" r="25"/>
+              <path class="stroke ink" d="M77 76l25 25"/>
+              <path class="thin gold" d="M44 55h31M49 68h22"/>
+            </svg>
+          </div>
+          <h3>아틀리에 루페</h3>
+          <p>교수의 확대경처럼 세부를 보되 결과는 읽기 쉬운 선으로 정리.</p>
+        </article>
+
+        <article class="icon-card">
+          <div class="icon-frame">
+            <svg viewBox="0 0 128 128" role="img" aria-label="Point Text">
+              <circle class="fill blue" cx="35" cy="42" r="5"/>
+              <circle class="fill rose" cx="49" cy="38" r="4"/>
+              <circle class="fill gold" cx="64" cy="42" r="5"/>
+              <circle class="fill green" cx="80" cy="38" r="4"/>
+              <circle class="fill violet" cx="94" cy="42" r="5"/>
+              <circle class="fill rose" cx="43" cy="58" r="4"/>
+              <circle class="fill blue" cx="58" cy="62" r="5"/>
+              <circle class="fill gold" cx="75" cy="59" r="4"/>
+              <path class="thin ink" d="M33 82h62M42 96h45"/>
+              <path class="fine ink" d="M24 30v-9h9M95 21h9v9M104 96v9h-9M33 105h-9v-9"/>
+            </svg>
+          </div>
+          <h3>점묘 텍스트</h3>
+          <p>점들의 시각 정보를 판독 가능한 문장으로 바꾸는 변환 아이콘.</p>
+        </article>
+
+        <article class="icon-card">
+          <div class="icon-frame">
+            <svg viewBox="0 0 128 128" role="img" aria-label="Fauve Highlight">
+              <path class="stroke rose" d="M29 70c21-19 46-22 70-8" opacity=".82"/>
+              <path class="stroke gold" d="M32 87c19-13 42-15 63-5" opacity=".82"/>
+              <path class="thin ink" d="M32 42h62M32 55h43"/>
+              <path class="thin blue" d="M24 32v-11h11M93 21h11v11M104 93v11H93M35 104H24V93"/>
+            </svg>
+          </div>
+          <h3>야수파 하이라이트</h3>
+          <p>대담한 색면으로 선택 영역을 강조하고 글줄은 검정 선으로 고정.</p>
+        </article>
+
+        <article class="icon-card">
+          <div class="icon-frame">
+            <svg viewBox="0 0 128 128" role="img" aria-label="Nouveau Aperture">
+              <path class="thin green" d="M33 88c-5-31 12-55 36-56 19-1 33 13 27 31-5 16-27 18-34 6"/>
+              <path class="thin rose" d="M91 40c7 31-10 55-34 56-18 1-32-12-28-29 4-16 25-20 34-8"/>
+              <path class="thin ink" d="M44 63h40M48 77h32"/>
+              <circle class="fill gold" cx="64" cy="64" r="5"/>
+            </svg>
+          </div>
+          <h3>누보 조리개</h3>
+          <p>유려한 곡선으로 화면 일부를 감싸는 장식적이지만 얇은 표식.</p>
+        </article>
+
+        <article class="icon-card">
+          <div class="icon-frame">
+            <svg viewBox="0 0 128 128" role="img" aria-label="Composition Grid">
+              <rect class="thin ink" x="26" y="25" width="76" height="78" rx="4"/>
+              <path class="fine gold" d="M55 25v78M79 25v78M26 55h76M26 79h76"/>
+              <path class="thin blue" d="M37 42h34M37 67h28M37 91h46"/>
+              <circle class="fill rose" cx="85" cy="42" r="5"/>
+            </svg>
+          </div>
+          <h3>구도 격자</h3>
+          <p>교수의 화면 분석처럼 선택 영역을 구조화해 텍스트를 찾는 아이콘.</p>
+        </article>
+
+        <article class="icon-card">
+          <div class="icon-frame">
+            <svg viewBox="0 0 128 128" role="img" aria-label="Critique Label">
+              <rect class="fill blue" x="32" y="26" width="64" height="42" rx="5" opacity=".86"/>
+              <path class="fine" style="color:#fffefa" d="M43 55h42M49 42h26"/>
+              <rect class="thin ink" x="29" y="78" width="70" height="28" rx="4"/>
+              <path class="thin rose" d="M40 91h47"/>
+              <path class="fine gold" d="M53 100h22"/>
+            </svg>
+          </div>
+          <h3>비평 라벨</h3>
+          <p>화면 이미지를 짧은 캡션처럼 읽어내는 갤러리형 콘셉트.</p>
+        </article>
+
+        <article class="icon-card">
+          <div class="icon-frame">
+            <svg viewBox="0 0 128 128" role="img" aria-label="Engraver Eye">
+              <path class="fine ink" d="M30 40h68M33 50h62M36 60h56M39 70h50M42 80h44"/>
+              <path class="thin blue" d="M29 64c15-19 55-19 70 0-15 19-55 19-70 0Z"/>
+              <circle class="fill rose" cx="64" cy="64" r="8"/>
+              <path class="stroke gold" d="M83 83l19 19"/>
+            </svg>
+          </div>
+          <h3>판화의 시선</h3>
+          <p>해칭의 밀도 속에서 문자 구조를 포착하는 학술적인 렌즈.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="simple" aria-labelledby="simple-title">
+      <div class="section-head">
+        <h2 id="simple-title">심플 이즈 베스트 관점</h2>
+        <span class="count">10 concepts</span>
+      </div>
+      <div class="grid">
+        <article class="icon-card">
+          <div class="icon-frame">
+            <svg viewBox="0 0 128 128" role="img" aria-label="Crop Text">
+              <path class="thin ink" d="M29 41V26h15M84 26h15v15M99 87v15H84M44 102H29V87"/>
+              <path class="stroke blue" d="M42 51h44M42 66h44M42 81h27"/>
+            </svg>
+          </div>
+          <h3>Crop Text</h3>
+          <p>캡처 영역과 텍스트 결과만 남긴 가장 직접적인 기본형.</p>
+        </article>
+
+        <article class="icon-card">
+          <div class="icon-frame">
+            <svg viewBox="0 0 128 128" role="img" aria-label="Scan Line">
+              <rect class="thin ink" x="28" y="31" width="72" height="66" rx="6"/>
+              <path class="stroke green" d="M31 64h66"/>
+              <path class="thin ink" d="M43 48h42M43 80h29"/>
+            </svg>
+          </div>
+          <h3>Scan Line</h3>
+          <p>한 줄 스캔으로 화면에서 문자를 읽는 동작을 즉시 전달.</p>
+        </article>
+
+        <article class="icon-card">
+          <div class="icon-frame">
+            <svg viewBox="0 0 128 128" role="img" aria-label="Lens Text">
+              <circle class="thin ink" cx="58" cy="57" r="27"/>
+              <path class="stroke ink" d="M78 78l24 24"/>
+              <path class="thin blue" d="M43 52h31M43 65h22"/>
+            </svg>
+          </div>
+          <h3>Lens Text</h3>
+          <p>확대경과 텍스트 라인만으로 OCR을 설명하는 범용형.</p>
+        </article>
+
+        <article class="icon-card">
+          <div class="icon-frame">
+            <svg viewBox="0 0 128 128" role="img" aria-label="Clipboard OCR">
+              <rect class="thin ink" x="35" y="24" width="58" height="82" rx="7"/>
+              <path class="thin ink" d="M51 24h26l3 12H48l3-12Z"/>
+              <path class="stroke green" d="M47 57h34M47 72h34M47 87h20"/>
+            </svg>
+          </div>
+          <h3>Clipboard OCR</h3>
+          <p>성공 결과가 클립보드 텍스트라는 제품 계약을 단순하게 표현.</p>
+        </article>
+
+        <article class="icon-card">
+          <div class="icon-frame">
+            <svg viewBox="0 0 128 128" role="img" aria-label="Cursor Region">
+              <path class="thin ink" d="M27 35v-11h11M86 24h11v11M97 82v11H86M38 93H27V82"/>
+              <path class="fill blue" d="M51 42l34 20-17 5 12 20-10 6-12-20-12 12 5-43Z"/>
+              <path class="thin ink" d="M43 101h42"/>
+            </svg>
+          </div>
+          <h3>Cursor Region</h3>
+          <p>사용자가 끌어 선택하는 첫 순간에 초점을 둔 메뉴 바 아이콘 후보.</p>
+        </article>
+
+        <article class="icon-card">
+          <div class="icon-frame">
+            <svg viewBox="0 0 128 128" role="img" aria-label="Corners Only">
+              <path class="stroke ink" d="M28 44V26h18M82 26h18v18M100 82v18H82M46 100H28V82"/>
+              <rect class="fill green" x="48" y="56" width="32" height="16" rx="3"/>
+            </svg>
+          </div>
+          <h3>Corners Only</h3>
+          <p>아이콘 크기가 작아져도 버티는 네 모서리와 중앙 블록.</p>
+        </article>
+
+        <article class="icon-card">
+          <div class="icon-frame">
+            <svg viewBox="0 0 128 128" role="img" aria-label="Text Block">
+              <rect class="thin ink" x="28" y="28" width="72" height="72" rx="16"/>
+              <path class="stroke blue" d="M43 49h42M43 64h34M43 79h42"/>
+            </svg>
+          </div>
+          <h3>Text Block</h3>
+          <p>앱 아이콘으로 쓰기 좋은 둥근 사각형 안의 최소 텍스트 구조.</p>
+        </article>
+
+        <article class="icon-card">
+          <div class="icon-frame">
+            <svg viewBox="0 0 128 128" role="img" aria-label="Image To Lines">
+              <rect class="thin ink" x="27" y="35" width="34" height="42" rx="5"/>
+              <path class="fill green" d="M33 70l9-12 7 8 4-5 6 9H33Z"/>
+              <path class="thin ink" d="M72 47h29M72 62h29M72 77h18"/>
+              <path class="stroke blue" d="M61 64h9"/>
+            </svg>
+          </div>
+          <h3>Image to Lines</h3>
+          <p>이미지에서 텍스트 라인으로 넘어가는 변환을 좌우로 표현.</p>
+        </article>
+
+        <article class="icon-card">
+          <div class="icon-frame">
+            <svg viewBox="0 0 128 128" role="img" aria-label="Command Zero">
+              <rect class="thin ink" x="30" y="36" width="68" height="56" rx="9"/>
+              <text x="64" y="65" text-anchor="middle" dominant-baseline="middle" font-size="22" font-weight="700" fill="#18201d">⌘0</text>
+              <path class="thin blue" d="M24 31v-9h9M95 22h9v9M104 97v9h-9M33 106h-9v-9"/>
+            </svg>
+          </div>
+          <h3>Command Zero</h3>
+          <p>제품의 핵심 단축키를 기억시키는 직관적인 시스템 유틸리티형.</p>
+        </article>
+
+        <article class="icon-card">
+          <div class="icon-frame">
+            <svg viewBox="0 0 128 128" role="img" aria-label="Paste Ready">
+              <path class="thin ink" d="M24 39v-10h10M68 29h10v10M78 75v10H68M34 85H24V75"/>
+              <path class="thin blue" d="M36 51h30M36 65h21"/>
+              <path class="stroke green" d="M72 60h23M87 50l11 10-11 10"/>
+              <rect class="thin ink" x="87" y="78" width="24" height="28" rx="4"/>
+            </svg>
+          </div>
+          <h3>Paste Ready</h3>
+          <p>선택한 문자가 바로 붙여넣기 가능한 상태가 되는 흐름.</p>
+        </article>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

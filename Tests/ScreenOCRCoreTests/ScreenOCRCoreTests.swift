@@ -213,6 +213,74 @@ final class ScreenOCRCoreTests: XCTestCase {
         XCTAssertEqual(document.metadata["preprocess_status"], "applied")
     }
 
+    func testPersistentPythonSidecarOCRPassesExplicitRecognitionWorkerCount() async throws {
+        let executable = try makeExecutableScript(
+            name: "fake-worker-rec-workers",
+            body: """
+            #!/bin/sh
+            printf '%s\\n' '{"event":"ready","ok":true,"init_elapsed_ms":1}'
+            while IFS= read -r line; do
+              value="${SCREEN_OCR_REC_WORKERS:-auto}"
+              printf '{"ok":true,"text":"%s","line_count":1,"lines":[{"text":"%s","score":1.0}],"diagnostics":{},"metadata":{}}\\n' "$value" "$value"
+            done
+            """
+        )
+        let ocr = PersistentPythonSidecarOCR(
+            pythonExecutablePath: executable.path,
+            sidecarPath: "/tmp/sidecar",
+            recognitionWorkerCount: 4
+        )
+        let image = CapturedImage(
+            id: "fixture://worker-count-explicit",
+            width: 320,
+            height: 120,
+            filePath: "/tmp/input.png"
+        )
+
+        let document = try await ocr.recognizeText(in: image)
+
+        XCTAssertEqual(document.normalizedText, "4")
+    }
+
+    func testPersistentPythonSidecarOCRAutoRecognitionWorkerCountClearsParentEnv() async throws {
+        let previous = getenv("SCREEN_OCR_REC_WORKERS").map { String(cString: $0) }
+        setenv("SCREEN_OCR_REC_WORKERS", "9", 1)
+        defer {
+            if let previous {
+                setenv("SCREEN_OCR_REC_WORKERS", previous, 1)
+            } else {
+                unsetenv("SCREEN_OCR_REC_WORKERS")
+            }
+        }
+
+        let executable = try makeExecutableScript(
+            name: "fake-worker-rec-workers-auto",
+            body: """
+            #!/bin/sh
+            printf '%s\\n' '{"event":"ready","ok":true,"init_elapsed_ms":1}'
+            while IFS= read -r line; do
+              value="${SCREEN_OCR_REC_WORKERS:-auto}"
+              printf '{"ok":true,"text":"%s","line_count":1,"lines":[{"text":"%s","score":1.0}],"diagnostics":{},"metadata":{}}\\n' "$value" "$value"
+            done
+            """
+        )
+        let ocr = PersistentPythonSidecarOCR(
+            pythonExecutablePath: executable.path,
+            sidecarPath: "/tmp/sidecar",
+            recognitionWorkerCount: nil
+        )
+        let image = CapturedImage(
+            id: "fixture://worker-count-auto",
+            width: 320,
+            height: 120,
+            filePath: "/tmp/input.png"
+        )
+
+        let document = try await ocr.recognizeText(in: image)
+
+        XCTAssertEqual(document.normalizedText, "auto")
+    }
+
     func testPersistentPythonSidecarOCRReportsWorkerError() async throws {
         let executable = try makeExecutableScript(
             name: "fake-worker-error",
@@ -241,6 +309,69 @@ final class ScreenOCRCoreTests: XCTestCase {
         } catch {
             XCTAssertTrue(error.localizedDescription.contains("model unavailable"))
         }
+    }
+
+    func testPersistentPythonSidecarOCRTimesOutWhenWorkerHangs() async throws {
+        let executable = try makeExecutableScript(
+            name: "fake-worker-hang",
+            body: """
+            #!/bin/sh
+            printf '%s\\n' '{"event":"ready","ok":true,"init_elapsed_ms":1}'
+            while IFS= read -r line; do
+              sleep 30
+            done
+            """
+        )
+        let ocr = PersistentPythonSidecarOCR(
+            pythonExecutablePath: executable.path,
+            sidecarPath: "/tmp/sidecar",
+            requestTimeoutMs: 300
+        )
+        _ = try await ocr.prewarm()
+        let image = CapturedImage(
+            id: "fixture://persistent-bridge-hang",
+            width: 320,
+            height: 120,
+            filePath: "/tmp/input.png"
+        )
+
+        do {
+            _ = try await ocr.recognizeText(in: image)
+            XCTFail("Expected persistent worker timeout")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("timed out"))
+        }
+    }
+
+    func testDebugArtifactWriterKeepsSourceImageExtension() throws {
+        // Captures are written as uncompressed TIFF; the debug copy must keep that container
+        // instead of mislabeling TIFF bytes with a .png name.
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("screen-ocr-debug-tests-\(UUID().uuidString)", isDirectory: true)
+        let sourceImageURL = directory.appendingPathComponent("captures/screen-ocr-debug-source.tiff")
+        try FileManager.default.createDirectory(
+            at: sourceImageURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data([0x4D, 0x4D, 0x00, 0x2A]).write(to: sourceImageURL)
+
+        let report = ScreenOCRRunReport(
+            status: .copiedText,
+            capturedImageID: "screen://1/1234",
+            capturedImagePath: sourceImageURL.path,
+            recognizedText: "OCR",
+            lineCount: 1,
+            errorMessage: nil,
+            timings: nil,
+            ocrDiagnostics: [:],
+            ocrMetadata: [:]
+        )
+        let pair = try OCRDebugArtifactWriter(
+            outputDirectory: directory.appendingPathComponent("debug-runs", isDirectory: true)
+        ).savePair(from: report, createdAt: Date(timeIntervalSince1970: 0))
+
+        XCTAssertTrue(pair.imagePath.hasSuffix("screen-ocr-debug-source.tiff"))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: pair.imagePath))
     }
 
     func testDebugArtifactWriterSavesImageTextAndManifestAsPair() throws {
@@ -304,6 +435,123 @@ final class ScreenOCRCoreTests: XCTestCase {
         XCTAssertEqual(ocrDiagnostics?["preprocess_applied"] as? Int, 1)
         let ocrMetadata = manifest?["ocr_metadata"] as? [String: Any]
         XCTAssertEqual(ocrMetadata?["preprocess_status"] as? String, "applied")
+    }
+
+    func testOCRBatchProgressCountsThroughBatchAndResetsWhenDrained() {
+        var progress = OCRBatchProgress()
+        XCTAssertFalse(progress.isActive)
+
+        progress.enqueue()
+        progress.enqueue()
+        progress.enqueue()
+        XCTAssertTrue(progress.isActive)
+        XCTAssertEqual(progress.total, 3)
+        XCTAssertEqual(progress.currentIndex, 1)
+
+        progress.complete()
+        XCTAssertEqual(progress.currentIndex, 2)
+        progress.complete()
+        XCTAssertEqual(progress.currentIndex, 3)
+
+        progress.complete()
+        // Batch drained: counters reset so the next burst starts at 1 again.
+        XCTAssertFalse(progress.isActive)
+        XCTAssertEqual(progress.total, 0)
+        XCTAssertEqual(progress.completed, 0)
+    }
+
+    func testOCRBatchProgressGrowsWhenMoreJobsArriveMidBatch() {
+        var progress = OCRBatchProgress()
+        progress.enqueue()
+        progress.enqueue()
+        progress.complete() // finished 1 of 2
+
+        progress.enqueue() // a third capture arrives while draining
+        XCTAssertEqual(progress.total, 3)
+        XCTAssertEqual(progress.currentIndex, 2)
+    }
+
+    func testOCRStageToastShowsOnlyStartedStagesAndGrowsOneRowAtATime() {
+        let progress = OCRStageProgress(
+            completedMs: [.screenCapture: 40, .pngWrite: 11, .preprocess: 30],
+            active: .recognize,
+            batchIndex: 1,
+            batchTotal: 1
+        )
+
+        let message = OCRStageToast.render(progress: progress, activeElapsedMs: 12_600)
+        let lines = message.split(separator: "\n").map(String.init)
+
+        // Pending stages (clipboard) are omitted — only started/completed rows appear.
+        XCTAssertEqual(lines.count, 5)
+        // Every row carries exactly one tab separating the left (label) and right (duration)
+        // columns; the app aligns the columns at draw time, so no space padding is emitted.
+        XCTAssertTrue(lines.allSatisfy { $0.filter { $0 == "\t" }.count == 1 })
+        XCTAssertFalse(message.contains("  "))
+        // total = 40+11+30 + 12600 = 12681ms -> 12.68초
+        XCTAssertEqual(lines[0], "⏳ 전체\t12.68초")
+        XCTAssertEqual(lines[1], "✓ 화면 캡처\t0.04초")
+        XCTAssertEqual(lines[2], "✓ 이미지 저장\t0.01초")
+        XCTAssertEqual(lines[3], "✓ 전처리\t0.03초")
+        XCTAssertEqual(lines[4], "▶ 검출+인식\t12.60초")
+    }
+
+    func testOCRStageToastStartsWithJustTotalAndFirstStage() {
+        let progress = OCRStageProgress(
+            completedMs: [.screenCapture: 40],
+            active: .pngWrite
+        )
+        let lines = OCRStageToast.render(progress: progress, activeElapsedMs: 50)
+            .split(separator: "\n").map(String.init)
+        XCTAssertEqual(lines.count, 3) // total + 화면 캡처 + (active) 이미지 저장
+        XCTAssertTrue(lines.allSatisfy { $0.filter { $0 == "\t" }.count == 1 })
+        XCTAssertEqual(lines[2], "▶ 이미지 저장\t0.05초")
+    }
+
+    func testOCRStageToastMarksCompleteAndShowsBatchPosition() {
+        let progress = OCRStageProgress(
+            completedMs: [
+                .screenCapture: 40, .pngWrite: 11, .preprocess: 30,
+                .recognize: 17_500, .clipboard: 1
+            ],
+            active: nil,
+            batchIndex: 2,
+            batchTotal: 3
+        )
+
+        let message = OCRStageToast.render(progress: progress, activeElapsedMs: 0)
+        let lines = message.split(separator: "\n").map(String.init)
+
+        XCTAssertTrue(progress.isComplete)
+        XCTAssertTrue(lines.allSatisfy { $0.filter { $0 == "\t" }.count == 1 })
+        // 40+11+30+17500+1 = 17582ms
+        XCTAssertEqual(lines[0], "✅ 전체 2/3\t17.58초")
+        XCTAssertEqual(lines[5], "✓ 클립보드 복사\t0.00초")
+    }
+
+    func testOCRStageMapsWorkerEvents() {
+        XCTAssertEqual(OCRStage.fromWorkerEvent("preprocess"), .preprocess)
+        XCTAssertEqual(OCRStage.fromWorkerEvent("recognize"), .recognize)
+        XCTAssertNil(OCRStage.fromWorkerEvent("bogus"))
+    }
+
+    func testOCRProgressToastShowsCountOnlyForMultipleJobs() {
+        XCTAssertEqual(
+            OCRProgressToast.processing(index: 1, total: 1, elapsed: 0.43),
+            "⏳ 처리 중 · 0.4초"
+        )
+        XCTAssertEqual(
+            OCRProgressToast.processing(index: 2, total: 3, elapsed: 1.28),
+            "⏳ 처리 중 2/3 · 1.3초"
+        )
+        XCTAssertEqual(
+            OCRProgressToast.copied(index: 2, total: 3, elapsed: 2.0),
+            "✅ 복사 완료 2/3 · 2.0초"
+        )
+        XCTAssertEqual(
+            OCRProgressToast.copied(index: 1, total: 1, elapsed: 0.05),
+            "✅ 복사 완료 · 0.1초"
+        )
     }
 }
 

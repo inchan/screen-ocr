@@ -6,7 +6,7 @@ Last updated: 2026-06-05.
 
 The local MVP is complete for the requested utility shape: a macOS menu bar app can register `Cmd+Shift+0`, accept a dragged region, capture that region, run local PaddleOCR, and copy recognized text to the clipboard.
 
-This is not yet a public distribution release. Developer ID signing, notarization, stapling, a fully standalone Python framework bundle, a real macOS 14 host smoke, and a representative real-world screenshot corpus remain release-readiness work.
+This is not yet a notarized public distribution release. An unsigned/ad-hoc GitHub Release path now exists, but Gatekeeper manual approval is expected. A real macOS 14 host smoke and a representative real-world screenshot corpus remain release-readiness work.
 
 ## Requirement Coverage
 
@@ -51,6 +51,6 @@ Current quantitative baselines:
 
 - Real-world screenshots are not yet represented by a separate 20-image corpus.
 - The macOS 14 fallback has been force-tested locally, but not yet smoked on an actual macOS 14 host.
-- Release signing and notarization require external Apple Developer credentials.
-- The embedded bundle still wraps the local Python 3.12 interpreter; a fully standalone framework bundle remains release work.
+- Developer ID signing and notarization require external Apple Developer credentials and are not part of the unsigned distribution path.
+- Unsigned releases require users to manually allow first launch through macOS Gatekeeper.
 - First-run permission UX is functional through preflight/status diagnostics, but still needs manual product polish.

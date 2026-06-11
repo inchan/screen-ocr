@@ -374,7 +374,7 @@ debug_text_path=""
 debug_manifest_path=""
 while (( SECONDS < deadline )); do
   app_status="$(ruby -rjson -e 'print JSON.parse(File.read(ARGV.fetch(0)))["status"] rescue ""' "$APP_STATUS_PATH")"
-  latest_capture="$(ruby -e 'marker = File.mtime(ARGV.fetch(0)); files = Dir["artifacts/captures/screen-ocr-*.png"].select { |path| File.mtime(path) > marker }; puts(files.max_by { |path| File.mtime(path) } || "")' artifacts/hotkey/alignment-smoke-start.marker)"
+  latest_capture="$(ruby -e 'marker = File.mtime(ARGV.fetch(0)); files = Dir["artifacts/captures/screen-ocr-*.{png,tiff}"].select { |path| File.mtime(path) > marker }; puts(files.max_by { |path| File.mtime(path) } || "")' artifacts/hotkey/alignment-smoke-start.marker)"
   debug_image_path="$(ruby -rjson -e 'print JSON.parse(File.read(ARGV.fetch(0)))["debug_image_path"] rescue ""' "$APP_STATUS_PATH")"
   debug_text_path="$(ruby -rjson -e 'print JSON.parse(File.read(ARGV.fetch(0)))["debug_text_path"] rescue ""' "$APP_STATUS_PATH")"
   debug_manifest_path="$(ruby -rjson -e 'print JSON.parse(File.read(ARGV.fetch(0)))["debug_manifest_path"] rescue ""' "$APP_STATUS_PATH")"
