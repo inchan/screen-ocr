@@ -115,6 +115,20 @@ if [[ -f "Package.swift" ]]; then
       fail "settings window layout smoke"
     fi
 
+    note "Running permission drop panel guidance smoke..."
+    if bash scripts/run_permission_drop_panel_smoke.sh; then
+      pass "permission drop panel guidance smoke"
+    else
+      fail "permission drop panel guidance smoke"
+    fi
+
+    note "Running window ordering policy smoke..."
+    if bash scripts/run_window_ordering_policy_smoke.sh; then
+      pass "window ordering policy smoke"
+    else
+      fail "window ordering policy smoke"
+    fi
+
     if grep -q 'ScreenOCRApp' Package.swift; then
       note "Running swift build for ScreenOCRApp..."
       if swift build --product ScreenOCRApp; then

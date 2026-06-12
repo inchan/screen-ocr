@@ -31,6 +31,8 @@ jobs:
         run: |
           bash scripts/run_hotkey_recorder_layout_smoke.sh
           bash scripts/run_settings_window_layout_smoke.sh
+          bash scripts/run_permission_drop_panel_smoke.sh
+          bash scripts/run_window_ordering_policy_smoke.sh
 
   unsigned-release:
     if: github.event_name != 'pull_request'

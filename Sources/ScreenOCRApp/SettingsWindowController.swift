@@ -96,6 +96,16 @@ final class SettingsWindowController: NSWindowController {
         window?.makeKeyAndOrderFront(nil)
     }
 
+    /// Moves settings directly to the permission controls when Screen Recording is missing.
+    func focusCapturePermissions() {
+        showPage(.capture)
+    }
+
+    func presentCapturePermissions() {
+        focusCapturePermissions()
+        present()
+    }
+
     // MARK: - Layout
 
     private func buildContentView() -> NSView {
@@ -183,6 +193,7 @@ final class SettingsWindowController: NSWindowController {
 
         launchCheckbox = NSButton(checkboxWithTitle: copy.launchAtLogin, target: self, action: #selector(toggleLaunchAtLogin))
         debugCheckbox = NSButton(checkboxWithTitle: copy.showProgressPopup, target: self, action: #selector(toggleDebug))
+        debugCheckbox.identifier = NSUserInterfaceItemIdentifier("settings.control.debug-progress")
 
         enginePopup = NSPopUpButton()
         enginePopup.identifier = NSUserInterfaceItemIdentifier("settings.control.engine")

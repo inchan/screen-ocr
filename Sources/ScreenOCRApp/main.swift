@@ -707,7 +707,11 @@ final class ScreenOCRApp: NSObject, NSApplicationDelegate {
             }
             settingsWindowController = controller
         }
-        settingsWindowController?.present()
+        if Self.canCaptureScreen() {
+            settingsWindowController?.present()
+        } else {
+            settingsWindowController?.presentCapturePermissions()
+        }
     }
 
     /// Suspends the global hotkey while the settings recorder is capturing — otherwise pressing

@@ -10,12 +10,14 @@ struct SettingsWindowLayoutSmoke {
         let settingsURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("screen-ocr-settings-window-smoke-\(UUID().uuidString)")
             .appendingPathComponent("settings.json")
-        let controller = SettingsWindowController(store: SettingsStore(fileURL: settingsURL))
+        let store = SettingsStore(fileURL: settingsURL)
+        let controller = SettingsWindowController(store: store)
         guard let window = controller.window,
               let root = window.contentView else {
             fail("settings window did not construct")
         }
 
+        assert(!store.settings.showDebugProgress, "progress popup defaults off")
         assert(window.styleMask.contains(.resizable), "settings window is resizable")
         assert(window.minSize.width >= 640, "settings window has practical minimum width")
         assert(findView(root, identifier: "settings.sidebar") != nil, "sidebar exists")
@@ -23,6 +25,13 @@ struct SettingsWindowLayoutSmoke {
         assert(findView(root, identifier: "settings.sidebar.capture") != nil, "capture sidebar item exists")
         assert(findView(root, identifier: "settings.sidebar.engine") != nil, "engine sidebar item exists")
         assert(findView(root, identifier: "settings.detail.general") != nil, "general detail is initially selected")
+        assert(
+            (findView(root, identifier: "settings.control.debug-progress") as? NSButton)?.state == .off,
+            "progress popup checkbox starts unchecked"
+        )
+
+        controller.focusCapturePermissions()
+        assert(findView(root, identifier: "settings.detail.capture") != nil, "permission focus opens capture detail")
 
         activateSidebar("settings.sidebar.capture", root: root)
         assert(findView(root, identifier: "settings.detail.capture") != nil, "capture detail opens from sidebar")
