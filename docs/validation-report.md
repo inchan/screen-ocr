@@ -1,6 +1,64 @@
 # Validation Report
 
-Last updated: 2026-06-11.
+Last updated: 2026-06-12.
+
+## 2026-06-12 Cycle: Experimental Sparkle updater path
+
+Scope: Add a reversible Sparkle-based update experiment for the unsigned GitHub
+Release distribution. The app reads only the GitHub Pages appcast, keeps
+automatic update checks off by default, disables Sparkle automatic
+download/install, shows version/update controls in Settings > General, and makes
+release appcast generation conditional on explicit Sparkle key configuration.
+
+Verified on the local macOS host:
+- Settings update smoke: `bash scripts/run_settings_window_layout_smoke.sh`
+  passed. It verifies the General > Version section, current version text,
+  update status text, manual check button, install/restart button, and
+  automatic update checkbox defaulting off in a fresh settings store.
+- App build: `swift build --product ScreenOCRApp` passed with Sparkle linked.
+- Script syntax and workflow parse checks passed:
+  `bash -n scripts/build_app_bundle.sh scripts/verify_app_bundle.sh scripts/generate_sparkle_appcast.sh scripts/agent_gate.sh`
+  and `ruby -e 'require "yaml"; YAML.load_file(".github/workflows/unsigned-release.yml")'`.
+- Missing appcast private key guard: `scripts/generate_sparkle_appcast.sh`
+  failed as expected with `FAIL: SPARKLE_PRIVATE_KEY is required to generate a Sparkle appcast`.
+- Missing Sparkle public key guard:
+  `SCREEN_OCR_ENABLE_SPARKLE_UPDATES=1 SCREEN_OCR_CODESIGN_IDENTITY=- scripts/build_app_bundle.sh`
+  failed as expected with
+  `FAIL: SCREEN_OCR_SPARKLE_PUBLIC_ED_KEY is required when SCREEN_OCR_ENABLE_SPARKLE_UPDATES=1`.
+- Opt-in bundle metadata:
+  `SCREEN_OCR_ENABLE_SPARKLE_UPDATES=1 SCREEN_OCR_SPARKLE_PUBLIC_ED_KEY=dummy-public-ed-key SCREEN_OCR_CODESIGN_IDENTITY=- scripts/build_app_bundle.sh && scripts/verify_app_bundle.sh`
+  passed, proving the bundle can include Sparkle metadata only when the
+  experiment is enabled.
+- Full agent gate: `scripts/agent_gate.sh` passed with `AGENT_GATE=PASS`,
+  including Swift tests, AppKit layout smokes, app bundle verification,
+  signature verification, OCR environment check, and 26 Python sidecar tests.
+- Release prep: `VERSION` was advanced to `0.0.3` so merging the PR to `main`
+  satisfies the unsigned release workflow's VERSION-change gate.
+
+Implementation evidence:
+- `Package.swift` links Sparkle 2 through Swift Package Manager.
+- `AppUpdater` wraps Sparkle behind a small app-owned boundary, refuses to start
+  update checks outside `/Applications`, keeps `automaticallyDownloadsUpdates`
+  false so Sparkle cannot silently install on quit, and exposes localized status
+  for Settings and the menu item.
+- `SettingsWindowController` shows the Version section in General and persists
+  `automaticUpdateChecks` with a default of `false`.
+- `scripts/build_app_bundle.sh` copies `Sparkle.framework`, injects Sparkle
+  Info.plist keys only when `SCREEN_OCR_ENABLE_SPARKLE_UPDATES=1`, and fails if
+  the public key is missing. The injected Sparkle keys keep
+  `SUAutomaticallyUpdate=false` and `SUAllowsAutomaticUpdates=false`.
+- `scripts/generate_sparkle_appcast.sh` generates `docs/appcast.xml` from the
+  unsigned release zip using `SPARKLE_PRIVATE_KEY`.
+- `.github/workflows/unsigned-release.yml` keeps the existing PR/release flow
+  and conditionally generates plus commits the appcast only when the repository
+  variable `SCREEN_OCR_ENABLE_SPARKLE_UPDATES` is `1`.
+
+Known verification gap:
+- A real Sparkle update was not installed because no production EdDSA key is
+  configured in this local cycle.
+- Hosted GitHub Actions release, GitHub Pages propagation, and a real
+  `SPARKLE_PRIVATE_KEY` appcast signature remain to be verified after the
+  experiment is enabled in repository settings.
 
 ## 2026-06-11 Cycle: Screen Recording permission guidance
 

@@ -53,6 +53,31 @@ Python framework from inside the app bundle instead of the build machine.
 No Apple secrets are required. The workflow only uses GitHub's built-in token to
 create or update the GitHub Release.
 
+## Update Experiment
+
+Sparkle update support is experimental and must stay opt-in for release builds
+until the signing keys are configured.
+
+- The appcast is expected at
+  `https://inchan.github.io/screen-ocr/appcast.xml`.
+- The repository keeps the GitHub Pages source at `docs/appcast.xml`. The
+  release workflow regenerates and commits that file only when update support
+  is enabled.
+- The app bundle should include `SUFeedURL` and `SUPublicEDKey` only when
+  update support is explicitly enabled for that build.
+- The bundle keeps `SUAutomaticallyUpdate=false` and
+  `SUAllowsAutomaticUpdates=false`; automatic checks may run, but automatic
+  download/install is disabled for the first experiment.
+- Enable the experiment by setting the repository variable
+  `SCREEN_OCR_ENABLE_SPARKLE_UPDATES=1` and the repository variable
+  `SPARKLE_PUBLIC_ED_KEY` to the Sparkle EdDSA public key.
+- Sparkle archive signing requires an EdDSA private key. Store it only in the
+  GitHub Actions secret `SPARKLE_PRIVATE_KEY`.
+- If update support is enabled and the signing secret is missing, the release
+  must fail instead of publishing unsigned update metadata.
+- The local generation command is `scripts/generate_sparkle_appcast.sh`; it
+  reads `SPARKLE_PRIVATE_KEY` from the environment and writes `docs/appcast.xml`.
+
 ## Limits
 
 - Gatekeeper warning is expected and cannot be removed without Developer ID

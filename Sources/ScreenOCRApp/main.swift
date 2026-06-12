@@ -11,9 +11,11 @@ import UniformTypeIdentifiers
 final class ScreenOCRApp: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
     private var statusMenuItem: NSMenuItem?
+    private var updateInstallMenuItem: NSMenuItem?
     private var hotKeyRef: EventHotKeyRef?
     private var hotKeyEventHandler: EventHandlerRef?
     private let settingsStore = SettingsStore()
+    private let appUpdater = AppUpdater()
     private var settingsWindowController: SettingsWindowController?
     private var retentionTimer: Timer?
     private var lastScreenRecordingAlertDate: Date?
@@ -48,6 +50,7 @@ final class ScreenOCRApp: NSObject, NSApplicationDelegate {
         installHotKeyHandler()
         _ = applyHotkey(settingsStore.settings.hotkey)
         syncLaunchAtLoginState()
+        configureUpdater()
         startRetentionSweep()
         prewarmOCRWorkerAtLaunch()
         if ProcessInfo.processInfo.environment["SCREEN_OCR_RUN_FIXTURE_ON_LAUNCH"] == "1" {
@@ -105,6 +108,10 @@ final class ScreenOCRApp: NSObject, NSApplicationDelegate {
         menu.addItem(NSMenuItem.separator())
         menu.addItem(makeMenuItem(title: "Capture OCR", action: #selector(runScreenOCR)))
         menu.addItem(makeMenuItem(title: "Settings…", action: #selector(openSettings), keyEquivalent: ","))
+        let updateItem = makeMenuItem(title: "Install Update and Relaunch...", action: #selector(installPreparedUpdateAndRelaunch))
+        updateItem.isHidden = true
+        updateInstallMenuItem = updateItem
+        menu.addItem(updateItem)
         // Screen-recording settings moved into the settings window's 권한 row.
         menu.addItem(makeMenuItem(title: "Quit", action: #selector(quit), keyEquivalent: "q"))
 
@@ -158,6 +165,27 @@ final class ScreenOCRApp: NSObject, NSApplicationDelegate {
         // "Settings…"); the menu reads cleaner as plain text.
         item.image = nil
         return item
+    }
+
+    private func configureUpdater() {
+        appUpdater.onStatusChange = { [weak self] status in
+            guard let self else { return }
+            self.settingsWindowController?.setUpdateStatus(status)
+            if status.canInstall {
+                self.updateStatus(status.message)
+            }
+        }
+        appUpdater.onPreparedUpdateChanged = { [weak self] isPrepared, version in
+            guard let item = self?.updateInstallMenuItem else { return }
+            item.isHidden = !isPrepared
+            item.isEnabled = isPrepared
+            if let version {
+                item.title = "Install Update \(version) and Relaunch..."
+            } else {
+                item.title = "Install Update and Relaunch..."
+            }
+        }
+        appUpdater.start(automaticChecksEnabled: settingsStore.settings.automaticUpdateChecks)
     }
 
     /// Installs the Carbon hotkey event handler once. The actual key combination is registered
@@ -690,6 +718,10 @@ final class ScreenOCRApp: NSObject, NSApplicationDelegate {
         NSApp.terminate(nil)
     }
 
+    @objc private func installPreparedUpdateAndRelaunch() {
+        appUpdater.installPreparedUpdateAndRelaunch()
+    }
+
     @objc private func openSettings() {
         if settingsWindowController == nil {
             let controller = SettingsWindowController(store: settingsStore)
@@ -705,6 +737,16 @@ final class ScreenOCRApp: NSObject, NSApplicationDelegate {
             controller.openScreenRecordingSettings = { [weak self] in
                 self?.openScreenRecordingSettings()
             }
+            controller.checkForUpdates = { [weak self] in
+                self?.appUpdater.checkForUpdates()
+            }
+            controller.installUpdateAndRelaunch = { [weak self] in
+                self?.appUpdater.installPreparedUpdateAndRelaunch()
+            }
+            controller.applyAutomaticUpdateChecks = { [weak self] enabled in
+                self?.appUpdater.setAutomaticChecksEnabled(enabled)
+            }
+            controller.setUpdateStatus(appUpdater.status)
             settingsWindowController = controller
         }
         if Self.canCaptureScreen() {

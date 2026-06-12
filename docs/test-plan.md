@@ -28,6 +28,7 @@ Use vertical BDD/TDD slices. Add one behavior-level test, make it pass with the 
 - Settings engine availability: verify Vision is selectable only on macOS/Vision-capable builds; unsupported platforms must show it disabled or normalize persisted `vision` settings back to PaddleOCR.
 - Settings hotkey layout smoke: compile the real `HotkeyRecorderView` with its settings types, instantiate it under AppKit, and verify its exposed first/last baselines match the centered label baselines so the `NSGridView` settings row can align "캡처 단축키" with the input field.
 - Settings redesign smoke: build `ScreenOCRApp` and verify the settings window can construct the two-pane General/Capture/Engine layout without losing existing controls or side-effect handlers. A screenshot/UI-state harness should follow for full visual proof.
+- Settings update smoke: verify the General page includes the Version section, current bundle version text, update status text, manual check button, install/restart button, and an automatic update checkbox that starts off on a fresh settings store.
 - Permission guidance smoke: compile the real permission helper panel content and verify it exposes the draggable app icon, a large left-pointing direction cue aligned with the instruction text, and minimal copy that names the left Screen Recording list destination. Settings layout smoke must also verify that the app can programmatically focus the Capture permission page when permission is missing.
 - Capture window ordering smoke: verify that capture overlay activation preserves already-front app windows but sends visible normal app windows that were behind another app back behind the overlay after activation.
 
@@ -92,6 +93,7 @@ Product-readiness candidate gates:
 - Paddle worker-count UI changes must preserve `Auto` as the default and prove that numeric choices affect the next worker process rather than only the settings file.
 - Settings row alignment changes must include a layout smoke or screenshot harness that proves custom controls expose sane AppKit baselines instead of relying on visual inspection only.
 - Settings redesign changes must preserve immediate application of existing settings and keep PaddleOCR worker controls visible only on the Engine page while PaddleOCR is selected.
+- Update integration changes must keep automatic update checks off by default, keep Sparkle automatic download/install disabled, verify Sparkle bundle metadata only when update support is explicitly enabled for a build, reject enabled builds without a public key, reject appcast generation without `SPARKLE_PRIVATE_KEY`, and never publish update metadata without an EdDSA signature.
 - Permission guidance changes must preserve a clean icon-plus-left-arrow instruction, align the arrow and text in one row, name the left Screen Recording list destination, avoid extra destination cards/explanatory copy, and keep permission-missing Settings entry focused on the Capture page.
 - Capture overlay changes must not promote a previously backgrounded Settings window to the front merely because the overlay activates the LSUIElement app.
 

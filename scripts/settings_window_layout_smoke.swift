@@ -18,6 +18,7 @@ struct SettingsWindowLayoutSmoke {
         }
 
         assert(!store.settings.showDebugProgress, "progress popup defaults off")
+        assert(!store.settings.automaticUpdateChecks, "automatic update checks default off")
         assert(window.styleMask.contains(.resizable), "settings window is resizable")
         assert(window.minSize.width >= 640, "settings window has practical minimum width")
         assert(findView(root, identifier: "settings.sidebar") != nil, "sidebar exists")
@@ -28,6 +29,15 @@ struct SettingsWindowLayoutSmoke {
         assert(
             (findView(root, identifier: "settings.control.debug-progress") as? NSButton)?.state == .off,
             "progress popup checkbox starts unchecked"
+        )
+        assert(findView(root, identifier: "settings.section.version") != nil, "version section exists on general page")
+        assert(findView(root, identifier: "settings.text.current-version") != nil, "current version text exists")
+        assert(findView(root, identifier: "settings.text.update-status") != nil, "update status text exists")
+        assert(findView(root, identifier: "settings.button.check-update") != nil, "manual update check button exists")
+        assert(findView(root, identifier: "settings.button.install-update") != nil, "install update button exists")
+        assert(
+            (findView(root, identifier: "settings.control.auto-update-checks") as? NSButton)?.state == .off,
+            "automatic update checkbox starts unchecked"
         )
 
         controller.focusCapturePermissions()

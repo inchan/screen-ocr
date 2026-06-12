@@ -13,11 +13,17 @@ let package = Package(
         .executable(name: "ScreenOCRSmoke", targets: ["ScreenOCRSmoke"]),
         .executable(name: "ScreenOCRFixtureWindow", targets: ["ScreenOCRFixtureWindow"])
     ],
+    dependencies: [
+        .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.9.3")
+    ],
     targets: [
         .target(name: "ScreenOCRCore"),
         .executableTarget(
             name: "ScreenOCRApp",
-            dependencies: ["ScreenOCRCore"]
+            dependencies: [
+                "ScreenOCRCore",
+                .product(name: "Sparkle", package: "Sparkle")
+            ]
         ),
         .executableTarget(
             name: "ScreenOCRSmoke",
