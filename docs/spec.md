@@ -57,6 +57,8 @@ On OCR failure, the app must not silently destroy useful state. The implementati
 
 The app must detect and explain missing screen capture permissions. If the chosen global hotkey path requires Accessibility or Input Monitoring permission, the app must detect and expose that state.
 
+When Screen Recording permission is missing, opening app Settings must land on the `Capture` detail page so the permission controls are immediately visible. The guided System Settings helper is placed next to System Settings when possible; its visible content must stay minimal: the draggable app icon, a large left-pointing arrow aligned with the instruction text, and a short instruction naming the left Screen Recording list as the drop destination.
+
 The default shortcut path should not require Accessibility or Input Monitoring. If it does in practice, that is a regression against the MVP design and must be documented with evidence.
 
 ## Display Handling
@@ -100,6 +102,8 @@ Feature: Screen region OCR
     When the user presses Cmd+Shift+0
     Then the app should not run OCR
     And the menu bar status should show that permission is required
+    And opening app Settings should focus the Capture permission controls
+    And the System Settings helper should show where to drag the app icon
 
   Scenario: Shortcut registration failure is visible
     Given Cmd+Shift+0 is unavailable

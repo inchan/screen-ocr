@@ -14,7 +14,7 @@ final class PermissionDropPanelController {
             return
         }
 
-        let size = CGSize(width: 380, height: 240)
+        let size = CGSize(width: 340, height: 224)
         let panel = NSPanel(
             contentRect: CGRect(origin: .zero, size: size),
             styleMask: [.titled, .closable, .nonactivatingPanel],
@@ -26,44 +26,81 @@ final class PermissionDropPanelController {
         panel.isReleasedWhenClosed = false
         panel.hidesOnDeactivate = false
 
-        let content = NSView(frame: CGRect(origin: .zero, size: size))
-
-        let iconView = DraggableAppIconView(
-            frame: CGRect(x: (size.width - 96) / 2, y: 110, width: 96, height: 96)
+        let content = Self.makeContentView(
+            size: size,
+            relaunchTarget: self,
+            relaunchAction: #selector(relaunchApp)
         )
-        iconView.image = NSApp.applicationIconImage
-        iconView.imageScaling = .scaleProportionallyUpOrDown
-        iconView.toolTip = "이 아이콘을 시스템 설정 목록으로 드래그"
-        content.addSubview(iconView)
-
-        let instruction = NSTextField(wrappingLabelWithString:
-            "위 아이콘을 시스템 설정 > 개인정보 보호 및 보안 > 화면 기록 목록으로 드래그해서 추가한 뒤, 아래 버튼으로 앱을 재시작하세요."
-        )
-        instruction.frame = CGRect(x: 24, y: 52, width: size.width - 48, height: 50)
-        instruction.alignment = .center
-        instruction.font = .systemFont(ofSize: 12)
-        instruction.textColor = .secondaryLabelColor
-        content.addSubview(instruction)
-
-        let relaunchButton = NSButton(
-            title: "앱 재시작",
-            target: self,
-            action: #selector(relaunchApp)
-        )
-        relaunchButton.bezelStyle = .rounded
-        relaunchButton.keyEquivalent = "\r"
-        relaunchButton.sizeToFit()
-        relaunchButton.frame.origin = CGPoint(
-            x: (size.width - relaunchButton.frame.width) / 2,
-            y: 16
-        )
-        content.addSubview(relaunchButton)
 
         panel.contentView = content
         panel.center()
         panel.makeKeyAndOrderFront(nil)
         self.panel = panel
         snapBesideSystemSettings()
+    }
+
+    static func makeContentView(
+        size: CGSize,
+        relaunchTarget: AnyObject,
+        relaunchAction: Selector
+    ) -> NSView {
+        let content = NSView(frame: CGRect(origin: .zero, size: size))
+        content.identifier = NSUserInterfaceItemIdentifier("permission.drop.panel")
+
+        let iconSize: CGFloat = 92
+        let iconView = DraggableAppIconView(
+            frame: CGRect(x: (size.width - iconSize) / 2, y: 108, width: iconSize, height: iconSize)
+        )
+        iconView.identifier = NSUserInterfaceItemIdentifier("permission.drop.icon")
+        iconView.image = NSApp.applicationIconImage
+        iconView.imageScaling = .scaleProportionallyUpOrDown
+        iconView.toolTip = "이 앱 아이콘을 왼쪽 화면 기록 목록으로 드래그"
+        iconView.setAccessibilityLabel("Screen OCR 앱 아이콘")
+        content.addSubview(iconView)
+
+        let direction = NSTextField(labelWithString: "←")
+        direction.identifier = NSUserInterfaceItemIdentifier("permission.drop.direction")
+        direction.alignment = .center
+        direction.font = .systemFont(ofSize: 44, weight: .bold)
+        direction.textColor = .controlAccentColor
+        direction.setAccessibilityLabel("왼쪽으로 드래그")
+
+        let instruction = NSTextField(labelWithString: "왼쪽 화면 기록 목록에 드래그해서 넣어주세요.")
+        instruction.identifier = NSUserInterfaceItemIdentifier("permission.drop.instruction")
+        instruction.alignment = .left
+        instruction.font = .systemFont(ofSize: 14, weight: .medium)
+        instruction.textColor = .labelColor
+        instruction.setContentCompressionResistancePriority(.required, for: .horizontal)
+
+        let guideRow = NSStackView(views: [direction, instruction])
+        guideRow.identifier = NSUserInterfaceItemIdentifier("permission.drop.guide-row")
+        guideRow.orientation = .horizontal
+        guideRow.alignment = .centerY
+        guideRow.spacing = 10
+        guideRow.translatesAutoresizingMaskIntoConstraints = false
+        content.addSubview(guideRow)
+
+        NSLayoutConstraint.activate([
+            guideRow.centerXAnchor.constraint(equalTo: content.centerXAnchor),
+            guideRow.topAnchor.constraint(equalTo: iconView.bottomAnchor, constant: 4)
+        ])
+
+        let relaunchButton = NSButton(
+            title: "앱 재시작",
+            target: relaunchTarget,
+            action: relaunchAction
+        )
+        relaunchButton.identifier = NSUserInterfaceItemIdentifier("permission.drop.relaunch")
+        relaunchButton.bezelStyle = .rounded
+        relaunchButton.keyEquivalent = "\r"
+        relaunchButton.sizeToFit()
+        relaunchButton.frame.origin = CGPoint(
+            x: (size.width - relaunchButton.frame.width) / 2,
+            y: 18
+        )
+        content.addSubview(relaunchButton)
+
+        return content
     }
 
     /// Positions the panel next to the System Settings window: to its right when there is

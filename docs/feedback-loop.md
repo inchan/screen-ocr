@@ -24,6 +24,26 @@ Adjustment: Add repo-local `AGENTS.md`, core docs, and `scripts/agent_gate.sh` b
 
 Status: adopted
 
+### 2026-06-11 Permission Helper Needs Destination Affordance
+
+Observation: A permission helper can expose a draggable app icon and still fail the user if it does not show the destination list clearly.
+
+Evidence: Local install feedback reported that opening the permission popup launched System Settings and showed the app icon, but the helper did not make it clear where the icon should be dragged.
+
+Adjustment: Add a dedicated permission helper smoke that verifies the draggable app icon, direction cue, and Screen Recording list destination hint. Keep Settings entry focused on the Capture permission controls when Screen Recording permission is missing.
+
+Status: adopted
+
+### 2026-06-12 Capture Overlay Should Preserve Background Settings
+
+Observation: Activating an LSUIElement app for capture input can unintentionally promote already-open app windows, such as Settings, even when the user had put them behind another app.
+
+Evidence: User install feedback reported that when Settings was open in the background, starting capture mode brought Settings back to the top.
+
+Adjustment: Keep a window-ordering smoke for capture activation policy. Capture may activate the app for overlay keyboard/first-click input, but inactive normal app windows must be ordered back unless the app was already active.
+
+Status: adopted
+
 ### 2026-06-05 Swift Gate
 
 Observation: After Swift code was added, the original agent gate still checked only documentation.

@@ -2,6 +2,84 @@
 
 Last updated: 2026-06-11.
 
+## 2026-06-11 Cycle: Screen Recording permission guidance
+
+Scope: Make the missing Screen Recording permission path easier to complete. When permission is missing, app Settings should open directly to the Capture permission controls, and the floating System Settings helper should visually show where to drag the app icon.
+
+Verified on the local macOS host:
+- Red settings smoke before implementation: `bash scripts/run_settings_window_layout_smoke.sh` failed because `SettingsWindowController` had no `focusCapturePermissions()` member.
+- Red permission helper smoke before implementation: `bash scripts/run_permission_drop_panel_smoke.sh` failed because `PermissionDropPanelController` had no `makeContentView(...)` member.
+- Settings focus smoke after implementation: `bash scripts/run_settings_window_layout_smoke.sh` passed. It now verifies that programmatic permission focus opens `settings.detail.capture`.
+- Permission guidance smoke after implementation: `bash scripts/run_permission_drop_panel_smoke.sh` passed. It verifies the draggable app icon, direction cue, and Screen Recording list destination hint.
+- Full Swift suite: `swift test` passed 28 tests.
+- App build: `swift build --product ScreenOCRApp` passed.
+- Full agent gate: `scripts/agent_gate.sh` passed with `AGENT_GATE=PASS`, including the new permission helper guidance smoke.
+
+Implementation evidence:
+- `AppDelegate.openSettings()` now presents the Capture permission page when `canCaptureScreen()` is false.
+- `SettingsWindowController` exposes `focusCapturePermissions()` and `presentCapturePermissions()` for permission-missing entry.
+- `PermissionDropPanelController` builds a reusable panel content view with an app-icon source, arrow cue, and System Settings Screen Recording list destination hint.
+- `scripts/agent_gate.sh` now includes the permission helper guidance smoke.
+
+Known verification gap:
+- The permission helper smoke verifies view structure and copy, not a pixel screenshot or a real TCC drag/drop grant.
+
+## 2026-06-11 Cycle: Progress popup default
+
+Scope: Keep the General > Display > progress popup checkbox unchecked on first launch.
+
+Verified on the local macOS host:
+- Settings layout smoke: `bash scripts/run_settings_window_layout_smoke.sh` passed after adding assertions that a fresh `SettingsStore` has `showDebugProgress == false` and the settings checkbox starts `.off`.
+- Full agent gate: `scripts/agent_gate.sh` passed with `AGENT_GATE=PASS`.
+
+Implementation evidence:
+- `AppSettings` already defaulted `showDebugProgress` to `false`; the settings smoke now locks the first-launch UI state.
+- `settings.control.debug-progress` identifies the checkbox for AppKit UI-state verification.
+
+Known verification gap:
+- Existing user settings files that already persisted `showDebugProgress: true` are intentionally preserved; this only controls first-launch/default state.
+
+## 2026-06-12 Cycle: Minimal permission helper cue
+
+Scope: Keep the permission helper visually minimal while still showing the leftward drag direction and drop destination clearly.
+
+Verified on the local macOS host:
+- Permission guidance smoke: `bash scripts/run_permission_drop_panel_smoke.sh` passed after asserting that `permission.drop.direction` is the left arrow `←`, the arrow font is at least 40 pt, the arrow and copy share an aligned row, the copy names the left Screen Recording list destination, and the extra destination card/title are absent.
+- Full agent gate: `scripts/agent_gate.sh` passed with `AGENT_GATE=PASS`.
+
+Implementation evidence:
+- `PermissionDropPanelController` now shows only the draggable app icon, a large left-pointing arrow aligned with `왼쪽 화면 기록 목록에 드래그해서 넣어주세요.`, and the relaunch button.
+
+Known verification gap:
+- This verifies view structure and copy only; it does not screenshot the panel or perform a real TCC drag/drop grant.
+
+## 2026-06-12 Cycle: Capture overlay window ordering
+
+Scope: Starting capture mode should not promote a Settings window that was already open but behind another app.
+
+Verified on the local macOS host:
+- Window ordering policy smoke: `bash scripts/run_window_ordering_policy_smoke.sh` passed. It verifies that inactive visible normal windows are selected for restore-behind behavior, while active app windows and floating panels are not.
+- Full agent gate: `scripts/agent_gate.sh` passed with `AGENT_GATE=PASS`.
+
+Implementation evidence:
+- `SelectionOverlayController` records inactive normal windows before `NSApp.activate(ignoringOtherApps:)`, then orders those windows back after the screen-saver-level overlay becomes key.
+- `WindowOrderingPolicy` keeps the selection rule small and independently smoke-tested.
+
+Known verification gap:
+- The smoke verifies the ordering policy, not a full hotkey run with a live Settings window behind another app.
+
+## 2026-06-12 Cycle: 0.0.2 release prep
+
+Scope: Prepare the current permission-helper and capture-window-ordering fixes for the unsigned release flow.
+
+Verified on the local macOS host:
+- `VERSION` was advanced to `0.0.2` so merging this PR to `main` will satisfy the release workflow's VERSION-change gate.
+- `.github/workflows/unsigned-release.yml` now runs the permission helper guidance smoke and window ordering policy smoke during PR checks, matching the local gate coverage for this slice.
+- Full agent gate: `scripts/agent_gate.sh` passed with `AGENT_GATE=PASS`.
+
+Known verification gap:
+- The hosted GitHub Actions PR check and release job must still run after push/PR/merge.
+
 ## 2026-06-11 Cycle: Unsigned embedded release path
 
 Scope: Support distribution without an Apple Developer account while keeping both PaddleOCR and Apple Vision selectable.

@@ -35,7 +35,7 @@ Sections:
   - Save location: path, change button, open button
   - Retention
 - Display
-  - Show progress popup
+  - Show progress popup: unchecked by default on first launch
 
 The app records saved outputs, but settings does not show a history or record browser.
 
@@ -49,6 +49,7 @@ Sections:
 - Permission
   - Screen Recording permission status
   - Open Screen Recording settings button
+  - When Screen Recording permission is missing, opening Settings selects this Capture page automatically.
 
 ### Engine
 

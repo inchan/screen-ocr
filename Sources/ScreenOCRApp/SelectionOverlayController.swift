@@ -28,6 +28,10 @@ final class SelectionOverlayController {
         // neither become key (no keyDown → Escape can't cancel) nor receive the first click as a
         // selection (it would be swallowed to activate the app). Activate the app first so the
         // borderless key-capable window below can take keyboard + first-mouse input.
+        let windowsToKeepBehind = WindowOrderingPolicy.windowsToKeepBehindDuringCapture(
+            appWasActive: NSApp.isActive,
+            windows: NSApp.windows
+        )
         NSApp.activate(ignoringOtherApps: true)
 
         windows = NSScreen.screens.map { screen in
@@ -54,6 +58,7 @@ final class SelectionOverlayController {
 
         // Make the first overlay key so Escape and the first selection click are delivered.
         windows.first?.makeKey()
+        windowsToKeepBehind.forEach { $0.orderBack(nil) }
         NSCursor.crosshair.set()
     }
 
@@ -205,4 +210,3 @@ enum SelectionOverlayError: Error, LocalizedError {
         }
     }
 }
-
