@@ -13,6 +13,9 @@ elif [[ -f "VERSION" ]]; then
 else
   APP_VERSION="0.0.1"
 fi
+ENABLE_SPARKLE_UPDATES="${SCREEN_OCR_ENABLE_SPARKLE_UPDATES:-0}"
+SPARKLE_FEED_URL="${SCREEN_OCR_SPARKLE_FEED_URL:-https://inchan.github.io/screen-ocr/appcast.xml}"
+SPARKLE_PUBLIC_ED_KEY="${SCREEN_OCR_SPARKLE_PUBLIC_ED_KEY:-}"
 APP_PATH="dist/${APP_NAME}.app"
 CONTENTS_PATH="$APP_PATH/Contents"
 MACOS_PATH="$CONTENTS_PATH/MacOS"
@@ -28,6 +31,24 @@ mkdir -p "$MACOS_PATH" "$FRAMEWORKS_PATH" "$RESOURCES_PATH"
 
 cp "$BIN_PATH/ScreenOCRApp" "$MACOS_PATH/ScreenOCRApp"
 chmod +x "$MACOS_PATH/ScreenOCRApp"
+
+SPARKLE_FRAMEWORK_SOURCE="$BIN_PATH/Sparkle.framework"
+if [[ ! -d "$SPARKLE_FRAMEWORK_SOURCE" ]]; then
+  SPARKLE_FRAMEWORK_SOURCE="$(
+    find .build -path '*/Sparkle.framework' -type d \
+      | grep -E '/(debug|release)/Sparkle.framework$' \
+      | head -1 \
+      || true
+  )"
+fi
+if [[ -z "$SPARKLE_FRAMEWORK_SOURCE" || ! -d "$SPARKLE_FRAMEWORK_SOURCE" ]]; then
+  printf 'FAIL: missing Sparkle.framework from SwiftPM build artifacts\n' >&2
+  exit 1
+fi
+rsync -a --delete "$SPARKLE_FRAMEWORK_SOURCE/" "$FRAMEWORKS_PATH/Sparkle.framework/"
+if ! otool -l "$MACOS_PATH/ScreenOCRApp" | grep -q '@executable_path/../Frameworks'; then
+  install_name_tool -add_rpath '@executable_path/../Frameworks' "$MACOS_PATH/ScreenOCRApp"
+fi
 
 if [[ -f "Resources/AppIcon.icns" ]]; then
   cp "Resources/AppIcon.icns" "$RESOURCES_PATH/AppIcon.icns"
@@ -151,6 +172,31 @@ else
 fi
 printf 'APPL????' >"$CONTENTS_PATH/PkgInfo"
 
+SPARKLE_PLIST_KEYS=""
+if [[ "$ENABLE_SPARKLE_UPDATES" == "1" ]]; then
+  if [[ -z "$SPARKLE_PUBLIC_ED_KEY" ]]; then
+    printf 'FAIL: SCREEN_OCR_SPARKLE_PUBLIC_ED_KEY is required when SCREEN_OCR_ENABLE_SPARKLE_UPDATES=1\n' >&2
+    exit 1
+  fi
+  SPARKLE_PLIST_KEYS="$(cat <<PLIST
+  <key>SUFeedURL</key>
+  <string>${SPARKLE_FEED_URL}</string>
+  <key>SUPublicEDKey</key>
+  <string>${SPARKLE_PUBLIC_ED_KEY}</string>
+  <key>SUEnableAutomaticChecks</key>
+  <false/>
+  <key>SUAutomaticallyUpdate</key>
+  <false/>
+  <key>SUAllowsAutomaticUpdates</key>
+  <false/>
+  <key>SUVerifyUpdateBeforeExtraction</key>
+  <true/>
+  <key>SUScheduledCheckInterval</key>
+  <integer>86400</integer>
+PLIST
+)"
+fi
+
 cat >"$CONTENTS_PATH/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -180,6 +226,7 @@ cat >"$CONTENTS_PATH/Info.plist" <<PLIST
   <string>14.0</string>
   <key>LSUIElement</key>
   <true/>
+${SPARKLE_PLIST_KEYS}
 </dict>
 </plist>
 PLIST

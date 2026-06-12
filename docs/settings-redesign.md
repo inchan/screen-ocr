@@ -1,6 +1,6 @@
 # Settings Redesign
 
-Last updated: 2026-06-11.
+Last updated: 2026-06-12.
 
 ## Goal
 
@@ -36,6 +36,12 @@ Sections:
   - Retention
 - Display
   - Show progress popup: unchecked by default on first launch
+- Version
+  - Current version
+  - Update status
+  - Check for updates
+  - Install and restart when an update is prepared
+  - Automatically check for updates: unchecked by default
 
 The app records saved outputs, but settings does not show a history or record browser.
 
@@ -77,6 +83,7 @@ Sections:
 - Section gap: about 24 pt.
 - No nested cards and no marketing-style content.
 - Changes apply immediately when a control changes. Settings that affect a future process, such as PaddleOCR worker count, state that constraint in help text.
+- Update controls stay compact at the bottom of General. The install/restart button may use the accent color when an update is ready; ordinary menu-bar update items stay plain text for macOS consistency.
 
 ## Wireframes
 
@@ -96,6 +103,11 @@ Sections:
 |                    |                                              |
 |                    |  Display                                     |
 |                    |    Progress        [ ] Show progress popup  |
+|                    |                                              |
+|                    |  Version                                     |
+|                    |    Current Version  0.0.2                    |
+|                    |    Update          Latest [Check]            |
+|                    |                    [ ] Check automatically   |
 +--------------------+----------------------------------------------+
 ```
 

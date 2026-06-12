@@ -89,6 +89,9 @@ jobs:
 
       - name: Build unsigned embedded app bundle
         if: steps.release.outputs.should_release == '1'
+        env:
+          SCREEN_OCR_ENABLE_SPARKLE_UPDATES: ${{ vars.SCREEN_OCR_ENABLE_SPARKLE_UPDATES }}
+          SCREEN_OCR_SPARKLE_PUBLIC_ED_KEY: ${{ vars.SPARKLE_PUBLIC_ED_KEY }}
         run: |
           version="${{ steps.release.outputs.version }}"
           SCREEN_OCR_VERSION="$version" SCREEN_OCR_EMBED_RUNTIME=1 SCREEN_OCR_CODESIGN_IDENTITY=- scripts/build_app_bundle.sh
@@ -125,6 +128,21 @@ jobs:
           Apple Vision selectable on supported macOS versions.
           README
 
+      - name: Generate Sparkle appcast
+        if: steps.release.outputs.should_release == '1'
+        env:
+          SCREEN_OCR_ENABLE_SPARKLE_UPDATES: ${{ vars.SCREEN_OCR_ENABLE_SPARKLE_UPDATES }}
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+          SCREEN_OCR_RELEASE_TAG: ${{ steps.release.outputs.release_tag }}
+          SCREEN_OCR_RELEASE_DOWNLOAD_PREFIX: "https://github.com/${{ github.repository }}/releases/download/${{ steps.release.outputs.release_tag }}"
+        run: |
+          set -euo pipefail
+          if [[ "${SCREEN_OCR_ENABLE_SPARKLE_UPDATES:-0}" != "1" ]]; then
+            echo "Sparkle update experiment is disabled"
+            exit 0
+          fi
+          scripts/generate_sparkle_appcast.sh
+
       - uses: actions/upload-artifact@v4
         if: steps.release.outputs.should_release == '1'
         with:
@@ -149,3 +167,33 @@ jobs:
               --title "Screen OCR ${release_tag}" \
               --notes-file dist/release/UNSIGNED-README.txt
           fi
+
+      - name: Commit Sparkle appcast
+        if: steps.release.outputs.should_release == '1'
+        env:
+          SCREEN_OCR_ENABLE_SPARKLE_UPDATES: ${{ vars.SCREEN_OCR_ENABLE_SPARKLE_UPDATES }}
+        run: |
+          set -euo pipefail
+          if [[ "${SCREEN_OCR_ENABLE_SPARKLE_UPDATES:-0}" != "1" ]]; then
+            echo "Sparkle update experiment is disabled"
+            exit 0
+          fi
+
+          release_tag="${{ steps.release.outputs.release_tag }}"
+          if git diff --quiet -- docs/appcast.xml; then
+            echo "No appcast changes to commit"
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/appcast.xml
+          git commit \
+            -m "Make Sparkle clients see ${release_tag}" \
+            -m "Constraint: Sparkle clients read the stable GitHub Pages appcast at https://inchan.github.io/screen-ocr/appcast.xml" \
+            -m "Confidence: high" \
+            -m "Scope-risk: narrow" \
+            -m "Tested: scripts/generate_sparkle_appcast.sh generated docs/appcast.xml in the release job" \
+            -m "Not-tested: GitHub Pages propagation timing is external to the release job" \
+            -m "Co-authored-by: OmX <omx@oh-my-codex.dev>"
+          git push

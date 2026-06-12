@@ -258,3 +258,17 @@ Constraint: macOS Gatekeeper will warn that the developer cannot be verified. Us
 Rejected: Require Developer ID signing/notarization for the first distribution path. It blocks the user's stated constraint.
 
 Rejected: Ship a Vision-only build to avoid bundling Python. The user wants the current engine choice model to remain, so PaddleOCR must remain available in the unsigned artifact.
+
+## D-0023: Experiment with Sparkle for unsigned app updates
+
+Status: accepted
+
+Decision: Introduce Sparkle 2 experimentally behind a small app-owned updater wrapper. The app reads a Sparkle appcast from GitHub Pages instead of calling the GitHub Releases API directly. Settings > General owns the visible version/update controls; automatic update checks default to off, automatic download/install is disabled, and installing a prepared update requires an explicit user action.
+
+Reason: Updating a macOS app safely includes appcast parsing, archive signature verification, download state, installation, relaunch, and failure recovery. Sparkle already owns that problem and can verify update archives with EdDSA signatures without requiring an Apple Developer account.
+
+Constraint: The unsigned release limits remain. Gatekeeper warnings and Screen Recording permission re-approval can still happen after updates because the app is ad-hoc signed and not notarized. Automatic update checks are supported only from `/Applications`. Sparkle's automatic download setting is not used because Sparkle can still attempt to install such an update on app termination. The Sparkle private key must live outside the repository, preferably in the GitHub Actions secret `SPARKLE_PRIVATE_KEY`; publishing update metadata without an EdDSA signature is not allowed once updater support is enabled for releases.
+
+Rejected: Implement a custom GitHub Release JSON updater in the app. It would duplicate Sparkle's appcast, signature, download, install, and recovery behavior.
+
+Rejected: Make updates fully silent in the first experiment. OCR/capture work, unsigned Gatekeeper behavior, install authorization, and permission re-approval make explicit install/restart the safer first product contract.

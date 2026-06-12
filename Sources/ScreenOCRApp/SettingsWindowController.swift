@@ -1,6 +1,37 @@
 import AppKit
 import Carbon.HIToolbox
 
+struct AppUpdateStatus: Equatable {
+    var currentVersion: String
+    var message: String
+    var availableVersion: String?
+    var isChecking: Bool
+    var canCheck: Bool
+    var canInstall: Bool
+
+    static func idle(currentVersion: String) -> AppUpdateStatus {
+        AppUpdateStatus(
+            currentVersion: currentVersion,
+            message: SettingsCopy.current.updateIdle,
+            availableVersion: nil,
+            isChecking: false,
+            canCheck: true,
+            canInstall: false
+        )
+    }
+
+    static func unavailable(currentVersion: String, message: String) -> AppUpdateStatus {
+        AppUpdateStatus(
+            currentVersion: currentVersion,
+            message: message,
+            availableVersion: nil,
+            isChecking: false,
+            canCheck: false,
+            canInstall: false
+        )
+    }
+}
+
 /// The preferences window. Built programmatically (the app ships no storyboard). File-only
 /// preferences are written straight to the `SettingsStore`; preferences with side effects that
 /// can fail are applied through closures the owner installs, so the owner can reject a change and
@@ -20,11 +51,18 @@ final class SettingsWindowController: NSWindowController {
     /// Opens System Settings at the Screen Recording pane (owned by the app, which also
     /// shows the drag-and-drop helper when the permission is missing).
     var openScreenRecordingSettings: (() -> Void)?
+    /// Starts a user-initiated update check through the app-owned updater wrapper.
+    var checkForUpdates: (() -> Void)?
+    /// Installs a prepared update and relaunches the app when the updater has one ready.
+    var installUpdateAndRelaunch: (() -> Void)?
+    /// Applies the automatic-update preference to the updater wrapper.
+    var applyAutomaticUpdateChecks: ((Bool) -> Void)?
 
     private var selectedPage: SettingsPage = .general
     private var sidebarItems: [SettingsPage: SettingsSidebarItemView] = [:]
     private var detailContainer: NSView!
     private var paddleSectionView: NSView?
+    private var updateStatus: AppUpdateStatus
 
     private var screenshotCheckbox: NSButton!
     private var textCheckbox: NSButton!
@@ -41,6 +79,11 @@ final class SettingsWindowController: NSWindowController {
     private var workerPopup: NSPopUpButton!
     private var screenRecordingStatusLabel: NSTextField!
     private var screenRecordingButton: NSButton!
+    private var currentVersionLabel: NSTextField!
+    private var updateStatusLabel: NSTextField!
+    private var checkUpdateButton: NSButton!
+    private var installUpdateButton: NSButton!
+    private var automaticUpdateCheckbox: NSButton!
 
     private let sidebarWidth: CGFloat = 180
     private let formLabelWidth: CGFloat = 116
@@ -72,6 +115,7 @@ final class SettingsWindowController: NSWindowController {
 
     init(store: SettingsStore) {
         self.store = store
+        self.updateStatus = AppUpdateStatus.idle(currentVersion: SettingsWindowController.currentVersionString())
         let window = NSWindow(
             contentRect: CGRect(x: 0, y: 0, width: 720, height: 440),
             styleMask: [.titled, .closable, .resizable],
@@ -90,6 +134,12 @@ final class SettingsWindowController: NSWindowController {
 
     required init?(coder: NSCoder) { nil }
 
+    static func currentVersionString(bundle: Bundle = .main) -> String {
+        let shortVersion = bundle.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+        let bundleVersion = bundle.object(forInfoDictionaryKey: "CFBundleVersion") as? String
+        return shortVersion ?? bundleVersion ?? "0.0.0"
+    }
+
     /// Brings the (accessory app's) settings window to the front.
     func present() {
         NSApp.activate(ignoringOtherApps: true)
@@ -104,6 +154,11 @@ final class SettingsWindowController: NSWindowController {
     func presentCapturePermissions() {
         focusCapturePermissions()
         present()
+    }
+
+    func setUpdateStatus(_ status: AppUpdateStatus) {
+        updateStatus = status
+        syncUpdateControls()
     }
 
     // MARK: - Layout
@@ -217,6 +272,35 @@ final class SettingsWindowController: NSWindowController {
             action: #selector(openScreenRecording)
         )
         screenRecordingButton.bezelStyle = .rounded
+
+        currentVersionLabel = NSTextField(labelWithString: updateStatus.currentVersion)
+        currentVersionLabel.identifier = NSUserInterfaceItemIdentifier("settings.text.current-version")
+        currentVersionLabel.font = .systemFont(ofSize: 12, weight: .medium)
+        currentVersionLabel.textColor = .secondaryLabelColor
+
+        updateStatusLabel = NSTextField(labelWithString: updateStatus.message)
+        updateStatusLabel.identifier = NSUserInterfaceItemIdentifier("settings.text.update-status")
+        updateStatusLabel.font = .systemFont(ofSize: 12)
+        updateStatusLabel.textColor = .secondaryLabelColor
+        updateStatusLabel.lineBreakMode = .byTruncatingTail
+        updateStatusLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        updateStatusLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 160).isActive = true
+
+        checkUpdateButton = NSButton(title: copy.checkForUpdates, target: self, action: #selector(checkUpdateNow))
+        checkUpdateButton.identifier = NSUserInterfaceItemIdentifier("settings.button.check-update")
+        checkUpdateButton.bezelStyle = .rounded
+
+        installUpdateButton = NSButton(title: copy.installAndRelaunch, target: self, action: #selector(installUpdateNow))
+        installUpdateButton.identifier = NSUserInterfaceItemIdentifier("settings.button.install-update")
+        installUpdateButton.bezelStyle = .rounded
+        installUpdateButton.contentTintColor = .controlAccentColor
+
+        automaticUpdateCheckbox = NSButton(
+            checkboxWithTitle: copy.automaticUpdateChecks,
+            target: self,
+            action: #selector(toggleAutomaticUpdateChecks)
+        )
+        automaticUpdateCheckbox.identifier = NSUserInterfaceItemIdentifier("settings.control.auto-update-checks")
     }
 
     private func buildSidebar() -> NSView {
@@ -335,6 +419,13 @@ final class SettingsWindowController: NSWindowController {
             stack.addArrangedSubview(makeSection(title: copy.displaySection, rows: [
                 makeRow(label: copy.progressLabel, content: wrap(debugCheckbox))
             ]))
+            let versionSection = makeSection(title: copy.versionSection, rows: [
+                makeRow(label: copy.currentVersionLabel, content: wrap(currentVersionLabel)),
+                makeRow(label: copy.updateLabel, content: updateControls()),
+                makeRow(label: "", content: wrap(automaticUpdateCheckbox))
+            ])
+            versionSection.identifier = NSUserInterfaceItemIdentifier("settings.section.version")
+            stack.addArrangedSubview(versionSection)
         case .capture:
             stack.addArrangedSubview(makeSection(title: copy.shortcutSection, rows: [
                 makeRow(label: copy.captureShortcutLabel, content: wrap(hotkeyRecorder))
@@ -437,6 +528,14 @@ final class SettingsWindowController: NSWindowController {
         return stack
     }
 
+    private func updateControls() -> NSView {
+        let stack = NSStackView(views: [updateStatusLabel, checkUpdateButton, installUpdateButton])
+        stack.orientation = .horizontal
+        stack.alignment = .centerY
+        stack.spacing = 8
+        return stack
+    }
+
     private func applyEngineOptionAvailability() {
         for (index, option) in engineOptions.enumerated() {
             enginePopup.menu?.item(at: index)?.isEnabled = option.engine.isAvailableOnCurrentPlatform
@@ -467,6 +566,7 @@ final class SettingsWindowController: NSWindowController {
         hotkeyRecorder.setConfig(settings.hotkey)
         launchCheckbox.state = settings.launchAtLogin ? .on : .off
         debugCheckbox.state = settings.showDebugProgress ? .on : .off
+        automaticUpdateCheckbox.state = settings.automaticUpdateChecks ? .on : .off
         let normalizedEngine = OCREngineChoice.normalizedForCurrentPlatform(settings.ocrEngine)
         let engineIndex = engineOptions.firstIndex { $0.engine == normalizedEngine } ?? 0
         enginePopup.selectItem(at: engineIndex)
@@ -480,7 +580,19 @@ final class SettingsWindowController: NSWindowController {
             ? copy.workerTooltip
             : copy.workerUnavailableTooltip
         syncScreenRecordingStatus()
+        syncUpdateControls()
         updateSidebarSelection()
+    }
+
+    private func syncUpdateControls() {
+        guard currentVersionLabel != nil else { return }
+        currentVersionLabel.stringValue = updateStatus.currentVersion
+        updateStatusLabel.stringValue = updateStatus.message
+        updateStatusLabel.textColor = updateStatus.canInstall ? .controlAccentColor : .secondaryLabelColor
+        checkUpdateButton.isEnabled = updateStatus.canCheck && !updateStatus.isChecking
+        checkUpdateButton.title = updateStatus.isChecking ? copy.checkingForUpdates : copy.checkForUpdates
+        installUpdateButton.isHidden = !updateStatus.canInstall
+        installUpdateButton.isEnabled = updateStatus.canInstall
     }
 
     // MARK: - Actions
@@ -504,6 +616,20 @@ final class SettingsWindowController: NSWindowController {
 
     @objc private func toggleDebug() {
         store.update { $0.showDebugProgress = (debugCheckbox.state == .on) }
+    }
+
+    @objc private func toggleAutomaticUpdateChecks() {
+        let enabled = automaticUpdateCheckbox.state == .on
+        store.update { $0.automaticUpdateChecks = enabled }
+        applyAutomaticUpdateChecks?(enabled)
+    }
+
+    @objc private func checkUpdateNow() {
+        checkForUpdates?()
+    }
+
+    @objc private func installUpdateNow() {
+        installUpdateAndRelaunch?()
     }
 
     @objc private func changeEngine() {
@@ -750,6 +876,7 @@ private struct SettingsCopy {
     let launchSection: String
     let saveSection: String
     let displaySection: String
+    let versionSection: String
     let shortcutSection: String
     let permissionSection: String
     let ocrEngineSection: String
@@ -758,6 +885,8 @@ private struct SettingsCopy {
     let saveLocationLabel: String
     let retentionLabel: String
     let progressLabel: String
+    let currentVersionLabel: String
+    let updateLabel: String
     let captureShortcutLabel: String
     let screenRecordingLabel: String
     let engineLabel: String
@@ -770,6 +899,12 @@ private struct SettingsCopy {
     let openButton: String
     let chooseButton: String
     let openScreenRecordingSettings: String
+    let checkForUpdates: String
+    let checkingForUpdates: String
+    let installAndRelaunch: String
+    let automaticUpdateChecks: String
+    let updateIdle: String
+    let updateUnavailable: String
     let off: String
     let oneDay: String
     let sevenDays: String
@@ -824,6 +959,7 @@ private struct SettingsCopy {
         launchSection: "시작",
         saveSection: "저장",
         displaySection: "표시",
+        versionSection: "버전",
         shortcutSection: "단축키",
         permissionSection: "권한",
         ocrEngineSection: "OCR 엔진",
@@ -832,6 +968,8 @@ private struct SettingsCopy {
         saveLocationLabel: "저장 위치",
         retentionLabel: "자동 정리",
         progressLabel: "진행 상황",
+        currentVersionLabel: "현재 버전",
+        updateLabel: "업데이트",
         captureShortcutLabel: "캡처 단축키",
         screenRecordingLabel: "화면 기록",
         engineLabel: "엔진",
@@ -844,6 +982,12 @@ private struct SettingsCopy {
         openButton: "열기",
         chooseButton: "선택",
         openScreenRecordingSettings: "화면 기록 설정 열기...",
+        checkForUpdates: "업데이트 확인",
+        checkingForUpdates: "확인 중...",
+        installAndRelaunch: "업데이트 설치 및 재시작",
+        automaticUpdateChecks: "자동으로 업데이트 확인",
+        updateIdle: "업데이트를 확인하지 않았습니다",
+        updateUnavailable: "업데이트 설정 필요",
         off: "끄기",
         oneDay: "1일",
         sevenDays: "7일",
@@ -868,6 +1012,7 @@ private struct SettingsCopy {
         launchSection: "Launch",
         saveSection: "Save",
         displaySection: "Display",
+        versionSection: "Version",
         shortcutSection: "Shortcut",
         permissionSection: "Permission",
         ocrEngineSection: "OCR Engine",
@@ -876,6 +1021,8 @@ private struct SettingsCopy {
         saveLocationLabel: "Save Location",
         retentionLabel: "Retention",
         progressLabel: "Progress",
+        currentVersionLabel: "Current Version",
+        updateLabel: "Update",
         captureShortcutLabel: "Capture Shortcut",
         screenRecordingLabel: "Screen Recording",
         engineLabel: "Engine",
@@ -888,6 +1035,12 @@ private struct SettingsCopy {
         openButton: "Open",
         chooseButton: "Choose",
         openScreenRecordingSettings: "Open Screen Recording Settings...",
+        checkForUpdates: "Check for Updates",
+        checkingForUpdates: "Checking...",
+        installAndRelaunch: "Install and Relaunch",
+        automaticUpdateChecks: "Automatically check for updates",
+        updateIdle: "Not checked yet",
+        updateUnavailable: "Update setup required",
         off: "Off",
         oneDay: "1 day",
         sevenDays: "7 days",

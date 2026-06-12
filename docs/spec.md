@@ -25,6 +25,7 @@ Primary user: a macOS user who repeatedly needs to extract Korean and English te
 - Host app: native macOS menu-bar utility.
 - Default UI: `MenuBarExtra` or `NSStatusItem` with `LSUIElement=true`.
 - Settings UI: macOS-style two-pane window with a left sidebar (`General`, `Capture`, `Engine`) and right-side sectioned form details. Settings text follows OS language: Korean for Korean OS language, English otherwise.
+- Settings > General shows app version and update controls at the bottom. Automatic update checks default to off. Manual checks are always user initiated, automatic download/install is disabled, and installing a prepared update requires an explicit install/restart action.
 - Default shortcut: `Cmd+Shift+0` through `RegisterEventHotKey`.
 - Capture: ScreenCaptureKit region capture. The implementation uses direct display-agnostic rect capture on macOS 15.2+ and a display-filter/sourceRect fallback for macOS 14+.
 - OCR: local Python PaddleOCR sidecar by default; Apple Vision may be selected on macOS where the Vision framework is available.
@@ -37,6 +38,7 @@ Primary user: a macOS user who repeatedly needs to extract Korean and English te
 - Each OCR request is bounded by a hard timeout. On timeout the worker process is terminated and the next request restarts it, so a hung worker never freezes the menu-bar app.
 - The worker response carries `text` and per-line `{text, score}`; it omits detection `box` polygons because the app does not consume them. The one-shot `screen_ocr_sidecar.ocr` CLI still emits `box`.
 - Settings expose the OCR engine. PaddleOCR remains the default; Apple Vision is disabled on platforms where Vision is unavailable.
+- Updates are checked through a Sparkle appcast, not the GitHub Releases API. GitHub Releases host the downloadable unsigned artifact; `docs/appcast.xml` is the stable feed served through GitHub Pages. Automatic update checks are only supported from an installed app under `/Applications`; other locations should show a move-to-Applications guidance state instead of starting Sparkle.
 - When PaddleOCR is selected, settings expose a Paddle worker-count control. The default `Auto` mode does not set `SCREEN_OCR_REC_WORKERS`, so the Python worker uses its existing CPU-count heuristic. Numeric values set `SCREEN_OCR_REC_WORKERS` for the next Paddle worker process.
 
 ### Configuration knobs (environment variables)

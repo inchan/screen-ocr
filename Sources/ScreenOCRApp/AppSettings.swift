@@ -58,6 +58,9 @@ struct AppSettings: Codable, Equatable {
     /// PaddleOCR recognizer worker count. `nil` means Auto: let the Python sidecar derive it
     /// from CPU count using its existing `_default_workers()` heuristic.
     var paddleOCRWorkerCount: Int?
+    /// Sparkle automatic update checks. Off by default because this unsigned build may still
+    /// require Gatekeeper approval or Screen Recording permission re-approval after updating.
+    var automaticUpdateChecks: Bool
 
     static let paddleOCRWorkerCountRange = 1...10
 
@@ -70,7 +73,8 @@ struct AppSettings: Codable, Equatable {
         hotkey: HotkeyConfig = .default,
         showDebugProgress: Bool = false,
         ocrEngine: OCREngineChoice = .paddleOCR,
-        paddleOCRWorkerCount: Int? = nil
+        paddleOCRWorkerCount: Int? = nil,
+        automaticUpdateChecks: Bool = false
     ) {
         self.saveScreenshots = saveScreenshots
         self.saveTextResults = saveTextResults
@@ -81,11 +85,12 @@ struct AppSettings: Codable, Equatable {
         self.showDebugProgress = showDebugProgress
         self.ocrEngine = OCREngineChoice.normalizedForCurrentPlatform(ocrEngine)
         self.paddleOCRWorkerCount = Self.normalizedPaddleOCRWorkerCount(paddleOCRWorkerCount)
+        self.automaticUpdateChecks = automaticUpdateChecks
     }
 
     // Decode defensively: a missing key falls back to its default rather than failing the load.
     enum CodingKeys: String, CodingKey {
-        case saveScreenshots, saveTextResults, saveDirectoryPath, retentionDays, launchAtLogin, hotkey, showDebugProgress, ocrEngine, paddleOCRWorkerCount
+        case saveScreenshots, saveTextResults, saveDirectoryPath, retentionDays, launchAtLogin, hotkey, showDebugProgress, ocrEngine, paddleOCRWorkerCount, automaticUpdateChecks
     }
 
     init(from decoder: Decoder) throws {
@@ -102,6 +107,7 @@ struct AppSettings: Codable, Equatable {
         ocrEngine = OCREngineChoice.normalizedForCurrentPlatform(decodedEngine)
         let decodedWorkerCount = try container.decodeIfPresent(Int.self, forKey: .paddleOCRWorkerCount)
         paddleOCRWorkerCount = Self.normalizedPaddleOCRWorkerCount(decodedWorkerCount)
+        automaticUpdateChecks = try container.decodeIfPresent(Bool.self, forKey: .automaticUpdateChecks) ?? defaults.automaticUpdateChecks
     }
 
     var saveDirectoryURL: URL {

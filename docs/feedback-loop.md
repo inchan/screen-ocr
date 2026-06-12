@@ -263,3 +263,23 @@ Evidence: The Paddle worker-count setting cycle verified the underlying worker e
 Adjustment: Add a lightweight settings-window smoke harness before relying on visual settings changes as fully verified. Adopted slices: `scripts/run_hotkey_recorder_layout_smoke.sh` verifies the custom hotkey recorder baselines; `scripts/run_settings_window_layout_smoke.sh` constructs the full settings window and verifies sidebar navigation plus PaddleOCR section visibility.
 
 Status: adopted
+
+### 2026-06-12 Updater Terms Need SDK Semantics Check
+
+Observation: Product wording such as "automatic download" can hide SDK-specific
+behavior. In Sparkle 2, automatic downloading is coupled to automatic
+installation on app termination, which conflicts with Screen OCR's explicit
+install/restart contract.
+
+Evidence: `SPUUpdaterDelegate.h` documents that Sparkle always attempts to
+install an automatically downloaded update when the app terminates, and
+`SPUUpdater.h` describes `automaticallyDownloadsUpdates` as automatic
+download/install behavior. The implementation was corrected to keep
+`automaticallyDownloadsUpdates=false` and `SUAllowsAutomaticUpdates=false`.
+
+Adjustment: Before encoding updater or installer decisions, confirm the SDK's
+exact semantics for "automatic" operations and automate the safety invariant
+when possible. `scripts/verify_app_bundle.sh` now rejects Sparkle-enabled
+bundles unless silent automatic update installation remains disabled.
+
+Status: adopted
