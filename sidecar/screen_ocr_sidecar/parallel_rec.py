@@ -36,7 +36,8 @@ def _default_workers() -> int:
     # cpu-2 leaves headroom for the detector process and the app. Measured on a 10-core
     # M2 Pro (6P+4E, dense 23-line capture): 4 workers 2372ms e2e, 6 -> 1919ms, 8 -> 1789ms,
     # 10 -> no further gain. The earlier "4 is best" result did not hold up under the
-    # production-path benchmark (scripts/bench_stage.py); efficiency cores still help
+    # production-path benchmark (scripts/experiments/bench_stage.py);
+    # efficiency cores still help
     # because the LPT width split keeps the long crops on the fast workers.
     # Capped at 6, not 8: each recognizer process holds ~508MB RSS of Paddle runtime, so
     # 8 -> 6 returns ~1GB while only the dense case slows (~7%); medium/strip measured equal.

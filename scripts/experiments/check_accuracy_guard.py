@@ -5,8 +5,8 @@ Runs every fixture in fixtures/ocr/manifest.json through worker.handle_request
 (the split detect → pooled-recognize path the app actually uses) and reports
 per-fixture CER. Save a baseline once, then compare candidate runs against it:
 
-  .venv-ocr/bin/python scripts/check_accuracy_guard.py --label acc-baseline
-  .venv-ocr/bin/python scripts/check_accuracy_guard.py --label candidate --compare acc-baseline
+  .venv-ocr/bin/python scripts/experiments/check_accuracy_guard.py --label acc-baseline
+  .venv-ocr/bin/python scripts/experiments/check_accuracy_guard.py --label candidate --compare acc-baseline
 
 A candidate passes only if no fixture's CER got worse than the baseline.
 """
@@ -18,7 +18,7 @@ import os
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 VENV_PYTHON = ROOT / ".venv-ocr" / "bin" / "python"
 if VENV_PYTHON.exists() and Path(sys.executable).resolve() != VENV_PYTHON.resolve():
     os.execv(str(VENV_PYTHON), [str(VENV_PYTHON), *sys.argv])

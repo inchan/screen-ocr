@@ -30,6 +30,22 @@ Every substantial change follows this sequence:
 
 Do not claim completion without fresh evidence.
 
+## Branching, PR, And Release Flow
+
+Default development does not target `main` directly.
+
+- Start feature work from the latest `origin/develop`. If `origin/develop` is
+  missing, create or synchronize it from `origin/main` before starting feature
+  branches.
+- Create work branches from `origin/develop`, using a scoped branch name such as
+  `codex/<short-description>`.
+- Open implementation PRs against `origin/develop`, not `origin/main`.
+- Keep `main` release-only. Do not merge feature branches directly to `main`.
+- Release by opening a PR from `develop` to `main`. The `develop -> main` PR is
+  the release gate and should contain the intended `VERSION` change.
+- After the `develop -> main` PR merges, verify the release workflow and GitHub
+  Release artifacts before reporting release completion.
+
 ## Phase Gates
 
 The project advances through these gates:
@@ -121,4 +137,3 @@ Before marking the goal complete, audit every user requirement against direct ev
 - Known gaps are either eliminated or explicitly outside the accepted scope.
 
 Missing or indirect evidence means the goal is not complete.
-

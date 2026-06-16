@@ -5,7 +5,7 @@ Prints worker init time, warm e2e medians, and the diag stage decomposition so a
 real-world slow capture can be attributed to cold start vs. warm pipeline stages.
 
 Usage:
-  .venv-ocr/bin/python scripts/bench_real_capture.py IMAGE [--repeats 3] [--label real]
+  .venv-ocr/bin/python scripts/experiments/bench_real_capture.py IMAGE [--repeats 3] [--label real]
 """
 from __future__ import annotations
 
@@ -17,13 +17,13 @@ import sys
 import time
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 VENV_PYTHON = ROOT / ".venv-ocr" / "bin" / "python"
 if VENV_PYTHON.exists() and Path(sys.executable).resolve() != VENV_PYTHON.resolve():
     os.execv(str(VENV_PYTHON), [str(VENV_PYTHON), *sys.argv])
 
 sys.path.insert(0, str(ROOT / "sidecar"))
-sys.path.insert(0, str(ROOT / "scripts"))
+sys.path.insert(0, str(ROOT / "scripts" / "experiments"))
 
 ARTIFACT_DIR = ROOT / "artifacts" / "stage-bench"
 

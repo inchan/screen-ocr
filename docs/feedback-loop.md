@@ -24,6 +24,97 @@ Adjustment: Add repo-local `AGENTS.md`, core docs, and `scripts/agent_gate.sh` b
 
 Status: adopted
 
+### 2026-06-16 Documentation Link Gate
+
+Observation: Repository cleanup can fix broken documentation links once, but
+the same drift can return unless local Markdown links are part of the normal
+gate.
+
+Evidence: A local Markdown link inventory returned no missing targets, while
+`scripts/agent_gate.sh` had no documentation link check to preserve that state.
+
+Adjustment: Add `scripts/check_docs_links.sh`, connect the documentation map
+through `docs/README.md`, and run the link checker from `scripts/agent_gate.sh`.
+
+Status: adopted
+
+### 2026-06-16 Agent Documentation Search Map
+
+Observation: A future agent could open the documentation index and see file
+names, but still miss current canonical facts such as default OCR engine,
+worker-count behavior, update constraints, release branch flow, and where
+historical experiment scripts moved.
+
+Evidence: `docs/README.md` listed documents by category but did not provide a
+resume path, active product facts, or searchable terms for engine, settings,
+permission, release, update, and experiment work.
+
+Adjustment: Add an Agent Quick Start and Search Map to `docs/README.md`, and
+point the root `README.md` documentation section at that starting map.
+
+Status: adopted
+
+### 2026-06-16 Documented Script Reference Gate
+
+Observation: The repository had many documented `scripts/...` commands, but no
+automated check that those paths still existed after cleanup.
+
+Evidence: The scripts audit found all current documented commands present, while
+`scripts/agent_gate.sh` only checked selected commands manually.
+
+Adjustment: Add `scripts/check_documented_scripts.sh` and run it from
+`scripts/agent_gate.sh` and PR CI.
+
+Status: adopted
+
+### 2026-06-16 Experiment Harness Quarantine
+
+Observation: Root-level `scripts/` mixed supported automation with historical
+research harnesses, making cleanup audits treat useful reproduction scripts as
+ambiguous dead code.
+
+Evidence: The parallel cleanup audit found experiment files such as
+`bench_stage.py`, `bench_real_capture.py`, and `exp_h*.sh` had no product
+callers, while performance docs still relied on them as research evidence.
+
+Adjustment: Move historical reproduction harnesses under
+`scripts/experiments/`, document their non-gate status in
+`scripts/experiments/README.md`, and make shell syntax checks recursive so
+retained experiment scripts still fail fast on syntax drift.
+
+Status: adopted
+
+### 2026-06-16 Release Policy Enforcement
+
+Observation: Written branch policy is not enough if GitHub Actions can publish
+a release outside the `develop -> main` gate.
+
+Evidence: The release audit found `workflow_dispatch` could publish a release
+without a `main` merge and PR validation did not reject feature PRs to `main` or
+release PRs missing `VERSION`.
+
+Adjustment: Enforce PR base/head policy in the release workflow, require
+`VERSION` on `develop -> main` release PRs, restrict manual dispatch to the
+current `VERSION` on `main`, and validate stable semver.
+
+Status: adopted
+
+### 2026-06-16 Develop-First Release Flow
+
+Observation: The project needed an explicit branch policy so ordinary feature
+work does not target `main` and releases happen through a controlled
+`develop -> main` PR.
+
+Evidence: User requested that `CLAUDE.md` and `AGENTS.md` direct agents to start
+work from `origin/develop`, open implementation PRs to `origin/develop`, and
+release by PR from `develop` to `main`.
+
+Adjustment: `AGENTS.md` now defines the develop-first branching, PR, and release
+flow. `CLAUDE.md` mirrors the same Claude-facing defaults and points back to
+`AGENTS.md` as the primary contract.
+
+Status: adopted
+
 ### 2026-06-11 Permission Helper Needs Destination Affordance
 
 Observation: A permission helper can expose a draggable app icon and still fail the user if it does not show the destination list clearly.

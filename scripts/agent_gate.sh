@@ -74,6 +74,41 @@ check_contains "docs/feedback-loop.md" "Status: adopted" "feedback loop has adop
 check_contains "docs/research.md" "https://" "research log contains source links"
 check_contains "docs/completion-audit.md" "Requirement Coverage" "completion audit maps requirements to evidence"
 
+if [[ -x "scripts/check_docs_links.sh" ]]; then
+  note "Running documentation link check..."
+  if scripts/check_docs_links.sh; then
+    pass "documentation link check"
+  else
+    fail "documentation link check"
+  fi
+else
+  fail "scripts/check_docs_links.sh is missing or not executable"
+fi
+
+if [[ -x "scripts/check_documented_scripts.sh" ]]; then
+  note "Running documented script reference check..."
+  if scripts/check_documented_scripts.sh; then
+    pass "documented script reference check"
+  else
+    fail "documented script reference check"
+  fi
+else
+  fail "scripts/check_documented_scripts.sh is missing or not executable"
+fi
+
+note "Running shell script syntax check..."
+shell_syntax_failed=0
+while IFS= read -r script; do
+  if ! bash -n "$script"; then
+    shell_syntax_failed=1
+  fi
+done < <(find scripts -type f -name '*.sh' | sort)
+if [[ "$shell_syntax_failed" -eq 0 ]]; then
+  pass "shell script syntax check"
+else
+  fail "shell script syntax check"
+fi
+
 if [[ -f "fixtures/ocr/manifest.json" ]]; then
   fixture_count="$(ruby -rjson -e 'print JSON.parse(File.read(ARGV.fetch(0))).fetch("fixtures").size' fixtures/ocr/manifest.json)"
   if [[ "$fixture_count" -ge 20 ]]; then

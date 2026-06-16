@@ -4,7 +4,7 @@ This document explains how agents should keep the project moving without waiting
 
 ## Target Result
 
-Build and verify a macOS menu bar screen OCR utility that captures a selected screen region with `Cmd+Shift+0`, runs local PaddleOCR, and writes recognized text to the clipboard.
+Build and verify a macOS menu bar screen OCR utility that captures a selected screen region with `Cmd+Shift+0`, runs local OCR with PaddleOCR as the default engine and Apple Vision as an optional engine where supported, and writes recognized text to the clipboard.
 
 ## Operating Loop
 
@@ -46,4 +46,3 @@ Parallelize only independent work:
 - Verification can run beside docs cleanup after implementation has a stable target.
 
 Keep implementation write scopes disjoint when delegating. The leader owns integration and final verification.
-

@@ -15,7 +15,7 @@ It also snapshots the recognized text per fixture so any optimization can be
 checked for accuracy regressions (text must stay identical to the baseline).
 
 Usage:
-  .venv-ocr/bin/python scripts/bench_stage.py [--repeats 5] [--label baseline]
+  .venv-ocr/bin/python scripts/experiments/bench_stage.py [--repeats 5] [--label baseline]
 """
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ import sys
 import time
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 VENV_PYTHON = ROOT / ".venv-ocr" / "bin" / "python"
 if VENV_PYTHON.exists() and Path(sys.executable).resolve() != VENV_PYTHON.resolve():
     os.execv(str(VENV_PYTHON), [str(VENV_PYTHON), *sys.argv])

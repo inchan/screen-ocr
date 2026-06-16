@@ -4,7 +4,7 @@
 # (SIGKILL), and count which of its recognizer-pool children survive.
 set -uo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 PY="$ROOT/.venv-ocr/bin/python"
 
 count_descendants() { # all live pythons whose ancestor chain includes $1

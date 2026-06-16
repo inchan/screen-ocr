@@ -1,6 +1,6 @@
 # OCR Performance Analysis
 
-Last updated: 2026-06-11.
+Last updated: 2026-06-16.
 
 ## Evaluation Contract
 
@@ -17,6 +17,11 @@ Pass condition for this optimization cycle:
 - prewarmed app worker hotkey smoke reports region-selection-complete to clipboard under 700 ms on the controlled two-line fixture,
 - Python sidecar tests and `scripts/agent_gate.sh` pass,
 - `docs/validation-report.md` records the evidence.
+
+Historical reproduction harnesses live in
+`scripts/experiments/README.md`. They are intentionally outside the normal
+release gate; promote one back to `scripts/` only when it becomes supported
+automation.
 
 Fresh baseline captured before optimization:
 - artifact: `artifacts/ocr/baseline-ocr-latency-20260605T060041Z.json`
@@ -213,7 +218,7 @@ Status: accepted for mostly-empty large selections. Real-world large screenshots
 
 User-reported 17s (app-reported `ocr_elapsed_ms` 14,584) for a 2504x2186 half-screen
 capture with 51 lines, while the warm production path runs the same image in ~4.8s.
-Decomposition of the gap (`scripts/bench_real_capture.py` on the original TIFF):
+Decomposition of the gap (`scripts/experiments/bench_real_capture.py` on the original TIFF):
 
 | Window | Measured |
 | --- | ---: |
