@@ -1,6 +1,6 @@
 // Micro-benchmark for the pngWrite stage: how long does ImageIO take to encode a
 // representative retina capture as PNG vs uncompressed TIFF, and how big are the files?
-// Run: swift scripts/bench_image_encode.swift <input.png> [repeats]
+// Run: swift scripts/experiments/bench_image_encode.swift <input.png> [repeats]
 import CoreGraphics
 import Foundation
 import ImageIO

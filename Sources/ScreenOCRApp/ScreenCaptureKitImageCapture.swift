@@ -158,7 +158,6 @@ struct ScreenCaptureKitImageCapture: ImageCapturing {
 }
 
 enum ScreenCaptureKitCaptureError: Error, LocalizedError {
-    case unsupportedOS
     case emptyImage
     case emptyShareableContent
     case displayNotFound(UInt32)
@@ -167,8 +166,6 @@ enum ScreenCaptureKitCaptureError: Error, LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .unsupportedOS:
-            return "ScreenCaptureKit region capture requires macOS 15.2 or newer"
         case .emptyImage:
             return "ScreenCaptureKit returned no image"
         case .emptyShareableContent:
@@ -176,9 +173,9 @@ enum ScreenCaptureKitCaptureError: Error, LocalizedError {
         case .displayNotFound(let displayID):
             return "ScreenCaptureKit could not find display \(displayID)"
         case .cannotCreateImageDestination:
-            return "Could not create PNG destination"
+            return "Could not create TIFF destination"
         case .cannotWriteImage:
-            return "Could not write captured PNG"
+            return "Could not write captured TIFF"
         }
     }
 }

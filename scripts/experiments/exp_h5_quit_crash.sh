@@ -5,7 +5,7 @@
 # process outlived the worker.
 set -uo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 PY="$ROOT/.venv-ocr/bin/python"
 REPORTS="$HOME/Library/Logs/DiagnosticReports"
 

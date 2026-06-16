@@ -6,7 +6,7 @@ every line with its box geometry (y_center / x_left / height) in final output
 order, so the row-clustering failure in _layout_text is visible, and so the 1152
 cap can be compared against the old 1536 on real small retina text.
 
-Usage: .venv-ocr/bin/python scripts/exp_h3_layout_debug.py /tmp/repro-jumbled.png
+Usage: .venv-ocr/bin/python scripts/experiments/exp_h3_layout_debug.py /tmp/repro-jumbled.png
 """
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ import os
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 VENV_PYTHON = ROOT / ".venv-ocr" / "bin" / "python"
 if VENV_PYTHON.exists() and Path(sys.executable).resolve() != VENV_PYTHON.resolve():
     os.execv(str(VENV_PYTHON), [str(VENV_PYTHON), *sys.argv])

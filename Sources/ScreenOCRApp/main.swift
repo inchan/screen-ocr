@@ -84,7 +84,10 @@ final class ScreenOCRApp: NSObject, NSApplicationDelegate {
         guard let pid = lastKnownWorkerPID, pid > 0 else { return }
         var pathBuffer = [CChar](repeating: 0, count: 4096)
         let length = proc_pidpath(pid, &pathBuffer, UInt32(pathBuffer.count))
-        guard length > 0, String(cString: pathBuffer).lowercased().contains("python") else { return }
+        guard length > 0 else { return }
+        let pathBytes = pathBuffer.prefix(Int(length)).map { UInt8(bitPattern: $0) }
+        let processPath = String(decoding: pathBytes, as: UTF8.self)
+        guard processPath.lowercased().contains("python") else { return }
         kill(pid, SIGTERM)
     }
 
@@ -269,12 +272,6 @@ final class ScreenOCRApp: NSObject, NSApplicationDelegate {
     @objc private func runScreenOCR() {
         Task {
             await runScreenOCRFromHotKey()
-        }
-    }
-
-    @objc private func runFixtureOCR() {
-        Task {
-            await runFixtureOCRFlow()
         }
     }
 
@@ -1226,10 +1223,11 @@ final class ScreenOCRApp: NSObject, NSApplicationDelegate {
         let paths = runtimePaths()
         let ocr = ocrRecognizer(paths: paths)
         let workerCountLabel = paddleWorkerCountLabel()
+        let shortcut = settingsStore.settings.hotkey.displayString
         updateStatus("Warming OCR...")
         writeWorkerStatus(
             status: "warming",
-            details: ["shortcut": "Cmd+Shift+0", "paddle_rec_workers": workerCountLabel],
+            details: ["shortcut": shortcut, "paddle_rec_workers": workerCountLabel],
             paths: paths
         )
 
@@ -1252,7 +1250,7 @@ final class ScreenOCRApp: NSObject, NSApplicationDelegate {
                     }
                 }
 
-                updateStatus("Ready - Cmd+Shift+0")
+                updateStatus("Ready - \(shortcut)")
                 writeWorkerStatus(status: "ready", details: details, paths: paths)
             } catch {
                 updateStatus("OCR worker failed")
@@ -1444,11 +1442,6 @@ private final class CopyToastPresenter {
         }
         window.contentView = ToastView(message: message)
         window.orderFrontRegardless()
-    }
-
-    func dismiss() {
-        closeTask?.cancel()
-        window?.orderOut(nil)
     }
 
     private func present(message: String, anchorFrame: CGRect?, visibleFrame: CGRect?) {

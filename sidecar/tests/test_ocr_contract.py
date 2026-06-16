@@ -58,7 +58,7 @@ class OCRContractTests(unittest.TestCase):
         self.assertEqual(document["lines"][0]["score"], 0.97)
 
     def test_recognize_image_limits_detector_input_for_screen_crops(self):
-        image_path = Path("fixtures/ocr/mixed-ko-en.png")
+        image_path = Path("fixtures/ocr/mixed-ko-en-simple.png")
         ocr = FakeOCR()
 
         recognize_image(image_path, ocr_factory=lambda: ocr)

@@ -175,11 +175,6 @@ final class PermissionDropPanelController {
         return nil
     }
 
-    func close() {
-        positioningTask?.cancel()
-        panel?.close()
-    }
-
     /// Screen Recording grants only take effect on a fresh process, so offer the restart here.
     /// The relaunch is delegated to a detached shell that waits for this instance to be gone:
     /// launching the new instance first (openApplication + terminate) briefly ran two copies —

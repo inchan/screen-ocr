@@ -11,6 +11,12 @@ When the app is running, press `Cmd+Shift+0`, drag a screen region, and release.
 - ScreenCaptureKit region capture with a direct macOS 15.2+ path and a macOS 14+ filter/sourceRect fallback
 - Python 3.12 PaddleOCR sidecar using `paddleocr==3.6.0` and `paddlepaddle==3.3.0`
 
+## Documentation
+
+See `docs/README.md` for the agent starting map, current canonical facts,
+search keywords, product specs, decisions, validation evidence, release notes,
+and design artifacts.
+
 ## Setup
 
 ```sh

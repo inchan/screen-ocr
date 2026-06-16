@@ -1,6 +1,191 @@
 # Validation Report
 
-Last updated: 2026-06-12.
+Last updated: 2026-06-16.
+
+## 2026-06-16 Cycle: Agent documentation search map
+
+Scope: Improve documentation discoverability for future agents by making
+`docs/README.md` a practical starting map, not only a category list.
+
+Verified on the local macOS host:
+- `scripts/check_docs_links.sh` passed with `DOC_LINKS=PASS checked=21`.
+- `scripts/check_documented_scripts.sh` passed with
+  `DOC_SCRIPT_REFS=PASS checked=29`.
+
+Implementation evidence:
+- `docs/README.md` now starts with an Agent Quick Start, current canonical
+  facts, and a Search Map for OCR engine, worker count, settings, permission,
+  release, update, performance, and capture topics.
+- Root `README.md` now points agents to `docs/README.md` for current facts and
+  search keywords, not only the documentation list.
+- `docs/feedback-loop.md` records the discoverability gap and adopted fix.
+
+Known verification gap:
+- This is a documentation-only discoverability change; no product behavior was
+  changed.
+
+## 2026-06-16 Cycle: Experiment harness quarantine
+
+Scope: Keep research reproduction artifacts, but separate them from supported
+root-level automation so cleanup audits and release gates can distinguish
+active scripts from historical experiments.
+
+Verified on the local macOS host:
+- `scripts/check_docs_links.sh` passed with `DOC_LINKS=PASS checked=21`.
+- `scripts/check_documented_scripts.sh` passed with
+  `DOC_SCRIPT_REFS=PASS checked=29`.
+- Recursive shell syntax sweep over `scripts/**/*.sh` passed with `bash -n`.
+- Workflow YAML parse passed with
+  `ruby -e 'require "yaml"; YAML.load_file(".github/workflows/unsigned-release.yml")'`.
+- Moved Python experiment scripts passed syntax compilation with
+  `python3 -m py_compile scripts/experiments/*.py`.
+- Full agent gate: `scripts/agent_gate.sh` passed with `AGENT_GATE=PASS`,
+  including documentation link checks, documented script reference checks,
+  recursive shell syntax checks, 28 Swift tests, AppKit smokes, bundle
+  verification, signature verification, OCR environment check, and 26 Python
+  sidecar tests.
+
+Implementation evidence:
+- Historical experiment and benchmark scripts now live under
+  `scripts/experiments/` with `scripts/experiments/README.md` documenting their
+  non-gate, reproduction-only status.
+- Moved scripts now compute the repository root from their deeper location, and
+  their usage strings/reference comments point at `scripts/experiments/...`.
+- `docs/README.md` links the experiment harness inventory, and
+  `docs/performance-analysis.md` points H6 reproduction evidence to the new
+  `bench_real_capture.py` location.
+- `scripts/agent_gate.sh` and `.github/workflows/unsigned-release.yml` now run
+  shell syntax checks recursively so experiment `.sh` files remain syntactically
+  valid even though they are not release automation.
+- Removed generated `__pycache__` directories from `scripts/`.
+
+Known verification gap:
+- Experiment harnesses were syntax/path checked, not re-run end to end, because
+  several require historical real captures or intentionally exercise disruptive
+  worker-shutdown scenarios.
+
+## 2026-06-16 Cycle: Parallel repository audit and release-policy cleanup
+
+Scope: Run a parallel, file-by-file audit across documentation, Swift app/core,
+Python OCR/fixtures, scripts, release automation, and reference graph. Apply
+only safe cleanup that does not change product behavior.
+
+Parallel lanes:
+- Documentation lane: no broken local Markdown links found; flagged stale
+  `docs/completion-audit.md` date and Paddle-only wording in
+  `docs/autonomous-system.md`.
+- Swift lane: confirmed active menu bar, hotkey, capture, OCR engine, worker
+  count, and updater paths; flagged unused app helpers and stale hardcoded
+  shortcut/status strings.
+- Python/OCR lane: confirmed 20 manifest fixtures map to 20 PNGs; flagged a
+  stale test reference to `mixed-ko-en.png` and experimental scripts with no
+  production callers.
+- Scripts lane: confirmed documented commands exist; recommended shell syntax
+  and documented-script reference checks in the normal gate.
+- Release lane: found that manual workflow dispatch could publish outside the
+  documented `develop -> main` gate and that PR validation did not enforce
+  release-PR shape.
+- Reference graph lane: confirmed `design/icons.html` as the only high-confidence
+  delete; classified experiment scripts as research artifacts rather than safe
+  deletion.
+
+Verified on the local macOS host:
+- `scripts/check_docs_links.sh` passed with `DOC_LINKS=PASS checked=20`.
+- `scripts/check_documented_scripts.sh` passed with
+  `DOC_SCRIPT_REFS=PASS checked=28`.
+- Shell syntax sweep over `scripts/*.sh` passed with `bash -n`.
+- Workflow YAML parse passed with
+  `ruby -e 'require "yaml"; YAML.load_file(".github/workflows/unsigned-release.yml")'`.
+- `swift test` passed 28 Swift tests.
+- `swift build --product ScreenOCRApp` passed. The remaining
+  `CGDisplayStream` deprecation warning is the documented macOS 14 permission
+  compatibility probe.
+- `scripts/run_python_tests.sh` passed 26 Python sidecar tests.
+- Correction loop: the first full `scripts/agent_gate.sh` run failed because
+  `scripts/check_documented_scripts.sh` treated placeholder prose such as
+  `scripts/...` as a real path. The checker now skips placeholders.
+- Full agent gate: final `scripts/agent_gate.sh` passed with
+  `AGENT_GATE=PASS`, including documentation link checks, documented script
+  reference checks, shell syntax checks, 28 Swift tests, AppKit smokes, bundle
+  verification, signature verification, OCR environment check, and 26 Python
+  sidecar tests.
+
+Implementation evidence:
+- `.github/workflows/unsigned-release.yml` now enforces PR branch policy:
+  implementation PRs target `develop`; release PRs to `main` must come from
+  `develop` and include `VERSION`.
+- Manual release dispatch is limited to rebuilding the current `VERSION` on
+  `main`; the optional input must match that file.
+- Release version values must match stable semver `x.y.z`.
+- PR CI now runs documentation link checks, documented script reference checks,
+  and shell syntax checks in addition to Swift build/test and layout smokes.
+- `scripts/check_documented_scripts.sh` was added and wired into
+  `scripts/agent_gate.sh`.
+- Removed unused app helpers: `runFixtureOCR()`, `CopyToastPresenter.dismiss()`,
+  and `PermissionDropPanelController.close()`.
+- Worker warmup status now uses the configured hotkey display string instead of
+  hardcoded `Cmd+Shift+0`.
+- Stale TIFF capture error text and the stale fixture test path were corrected.
+- `docs/release-unsigned.md`, `docs/roadmap.md`, `docs/autonomous-system.md`,
+  and `docs/completion-audit.md` were updated to match current behavior.
+
+Known verification gap:
+- Hosted GitHub Actions policy behavior was not executed in this local cycle;
+  the workflow was syntax/parse checked locally.
+- Experiment scripts with no inbound references were retained because they are
+  research reproduction artifacts, not proven dead product code.
+
+## 2026-06-16 Cycle: Repository cleanup and documentation link gate
+
+Scope: Remove unused repository artifacts, connect scattered documentation,
+add a durable local Markdown link check, and keep code cleanup behavior-neutral.
+
+Verified on the local macOS host:
+- Local Markdown link inventory before cleanup found no missing local targets.
+- New documentation gate: `scripts/check_docs_links.sh` passed with
+  `DOC_LINKS=PASS checked=20`.
+- Correction loop: the first `scripts/agent_gate.sh` run failed because the
+  cleanup used `String(decoding:as:)` with `CChar` bytes. The code now maps
+  `CChar` to `UInt8` before UTF-8 decoding, and `swift build --product
+  ScreenOCRApp` passed.
+- Full agent gate: final `scripts/agent_gate.sh` passed with
+  `AGENT_GATE=PASS`, including 28 Swift tests, AppKit layout smokes, app bundle
+  verification, signature verification, OCR environment check, and 26 Python
+  sidecar tests.
+
+Implementation evidence:
+- `docs/README.md` now provides the documentation map and links the previously
+  isolated update experiment and icon design notes.
+- Root `README.md` now points to `docs/README.md`.
+- `scripts/check_docs_links.sh` checks inline and reference-style local Markdown
+  links, and `scripts/agent_gate.sh` runs it.
+- Removed unreferenced duplicate `design/icons.html`; the canonical icon notes
+  remain in `docs/icon-design.md` and `docs/icon-design.html`.
+- Removed ignored `.DS_Store` files from runtime output directories.
+- `ScreenOCRApp.nudgeWorkerToExit()` no longer uses deprecated
+  `String(cString:)` on the `proc_pidpath` buffer.
+
+Known verification gap:
+- The macOS 14 `CGDisplayStream` compatibility warning remains intentional
+  because it protects the documented legacy capture fallback path.
+
+## 2026-06-16 Cycle: Develop-first workflow instructions
+
+Scope: Update repository agent instructions so feature work starts from
+`origin/develop`, implementation PRs target `origin/develop`, and releases are
+performed through a `develop -> main` PR.
+
+Verified on the local macOS host:
+- Instruction files: `AGENTS.md` now contains a dedicated Branching, PR, And
+  Release Flow section; `CLAUDE.md` was added with the same Claude-facing
+  branch and release defaults.
+- Branch context check: `git branch -r --list` showed only `origin/main` before
+  the instruction update, so the new guidance explicitly says to create or
+  synchronize `origin/develop` from `origin/main` if it is missing.
+
+Known verification gap:
+- This cycle updates instructions only. It does not create `origin/develop` or
+  change GitHub branch protection/rulesets.
 
 ## 2026-06-12 Cycle: Experimental Sparkle updater path
 

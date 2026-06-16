@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Release version to create or update, for example 0.1.0"
+        description: "Optional safety check; when set, must match VERSION on main"
         required: false
         type: string
 
@@ -21,6 +21,36 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate PR branch policy
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          set -euo pipefail
+
+          case "$BASE_REF" in
+            develop)
+              ;;
+            main)
+              if [[ "$HEAD_REF" != "develop" ]]; then
+                echo "Release PRs to main must come from develop; got $HEAD_REF -> $BASE_REF" >&2
+                exit 1
+              fi
+
+              git fetch --no-tags origin "$BASE_REF"
+              if ! git diff --name-only "origin/$BASE_REF"...HEAD | grep -qx 'VERSION'; then
+                echo "Release PRs to main must include VERSION" >&2
+                exit 1
+              fi
+              ;;
+            *)
+              echo "PR base must be develop for implementation or main for release; got $BASE_REF" >&2
+              exit 1
+              ;;
+          esac
 
       - name: Build and test Swift targets
         run: |
@@ -34,8 +64,16 @@ jobs:
           bash scripts/run_permission_drop_panel_smoke.sh
           bash scripts/run_window_ordering_policy_smoke.sh
 
+      - name: Run documentation and script checks
+        run: |
+          scripts/check_docs_links.sh
+          scripts/check_documented_scripts.sh
+          while IFS= read -r script; do
+            bash -n "$script"
+          done < <(find scripts -type f -name '*.sh' | sort)
+
   unsigned-release:
-    if: github.event_name != 'pull_request'
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -48,17 +86,32 @@ jobs:
           MANUAL_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || '' }}
           EVENT_NAME: ${{ github.event_name }}
           BEFORE_SHA: ${{ github.event.before }}
+          GIT_REF: ${{ github.ref }}
         run: |
           set -euo pipefail
 
-          if [[ -n "$MANUAL_VERSION" ]]; then
-            version="${MANUAL_VERSION#v}"
-          else
-            version="$(tr -d '[:space:]' < VERSION)"
+          version="$(tr -d '[:space:]' < VERSION)"
+          manual_version="${MANUAL_VERSION#v}"
+
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            if [[ "$GIT_REF" != "refs/heads/main" ]]; then
+              echo "Manual release rebuilds must run from main; got $GIT_REF" >&2
+              exit 1
+            fi
+
+            if [[ -n "$MANUAL_VERSION" && "$manual_version" != "$version" ]]; then
+              echo "Manual release version must match VERSION on main ($version); got $manual_version" >&2
+              exit 1
+            fi
           fi
 
           if [[ -z "$version" ]]; then
             echo "VERSION is empty" >&2
+            exit 1
+          fi
+
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "VERSION must be stable semver x.y.z; got $version" >&2
             exit 1
           fi
 

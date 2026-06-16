@@ -43,12 +43,17 @@ Python framework from inside the app bundle instead of the build machine.
 
 `.github/workflows/unsigned-release.yml` provides two paths:
 
-- Pull requests: build/test Swift and run layout smokes.
+- Pull requests: enforce the branch policy, build/test Swift, run layout
+  smokes, and run documentation/script checks. Implementation PRs target
+  `develop`. Release PRs target `main`, must come from `develop`, and must
+  include `VERSION`.
 - Main merges: when `VERSION` changes on `main`, build the embedded runtime
   bundle, verify it, zip it, upload it as an artifact, and publish/update a
   GitHub Release named `v<VERSION>`.
-- Manual dispatch: optionally build/publish a specific version without changing
-  `VERSION`.
+- Manual dispatch: rebuild/publish only the current `VERSION` on `main`; if an
+  input version is supplied, it must match that file.
+
+`VERSION` must be stable semver in `x.y.z` form.
 
 No Apple secrets are required. The workflow only uses GitHub's built-in token to
 create or update the GitHub Release.
