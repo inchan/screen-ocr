@@ -12,11 +12,11 @@ Reason: The user explicitly requested a self-directed system first, and the proj
 
 Rejected: Start by writing app code immediately. It would skip the requested operating system and increase the chance of undocumented assumptions.
 
-## D-0002: Default to local PaddleOCR, not hosted OCR
+## D-0002: Default to local OCR, not hosted OCR
 
 Status: accepted
 
-Decision: Use local PaddleOCR by default. Hosted PaddleOCR APIs are out of scope unless the user explicitly accepts credentials, network transfer, and privacy tradeoffs.
+Decision: Use local OCR engines by default. Hosted PaddleOCR APIs are out of scope unless the user explicitly accepts credentials, network transfer, and privacy tradeoffs. D-0021 now selects Apple Vision as the default local engine on supported macOS versions while keeping local PaddleOCR selectable.
 
 Reason: Screen OCR can include private data. Local OCR is aligned with a menu bar utility and avoids token/account requirements.
 
@@ -199,7 +199,7 @@ Rejected: Filtering low-score lines by default. It would change recognized text 
 
 ## D-0018: Keep PaddleOCR as the default while Apple Vision remains an optional engine
 
-Status: accepted
+Status: superseded by D-0021
 
 Decision: Keep `.paddleOCR` as the default OCR engine and expose Apple Vision as a selectable, in-process engine rather than replacing the default.
 
@@ -228,6 +228,18 @@ Status: accepted
 Decision: Add a PaddleOCR-only worker-count setting with `Auto` as the default. `Auto` omits `SCREEN_OCR_REC_WORKERS`; the Python sidecar treats the unset value as a safe single-recognizer-process default. Numeric selections set `SCREEN_OCR_REC_WORKERS` for the next Paddle worker process and opt into recognizer parallelism. Apple Vision remains selectable only when the platform supports Vision.
 
 Reason: Recent engine experiments showed PaddleOCR quality/speed depends on worker behavior, and users need a safe way to tune the recognizer pool without editing environment variables. However, the embedded macOS runtime produced repeated "Python quit unexpectedly" dialogs when Paddle recognizer child processes crashed during shutdown. Keeping `Auto` as a single-process safe default prevents crash-dialog floods; advanced users can still choose a numeric count for speed.
+
+## D-0021: Default fresh settings to Apple Vision
+
+Status: accepted
+
+Decision: Use Apple Vision as the default OCR engine on supported macOS versions. Keep local PaddleOCR selectable and preserve explicit `paddleocr` settings. If Vision is unavailable, normalize the default back to PaddleOCR.
+
+Reason: The product direction now favors the in-process Vision path as the default user experience. Vision avoids Python worker startup, model cache, and Paddle worker process lifecycle risks for the common fresh-install path, while PaddleOCR remains available for users who need its Korean/English behavior on cases where Vision regresses.
+
+Verification: `scripts/run_settings_window_layout_smoke.sh` now asserts that fresh settings default to Vision when available, settings files without `ocrEngine` decode to the current default, and explicit PaddleOCR settings remain preserved. `swift run ScreenOCRSmoke engine-bench fixtures/ocr/mixed-ko-en-simple.png --engine vision --repeats 1` provides a narrow local Vision runtime smoke for the release cycle.
+
+Constraint: The representative real-screen corpus gate remains open. This change is user-directed and intentionally keeps PaddleOCR selectable instead of removing it.
 
 Constraint: Worker lifecycle controls are PaddleOCR-only. Vision is in-process and has no recognizer pool, so the worker-count control must be hidden unless PaddleOCR is selected. Unsupported platforms must not allow Vision to become the active engine.
 

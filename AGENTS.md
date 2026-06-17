@@ -5,7 +5,7 @@ This repository builds a macOS menu bar utility for screenshot OCR.
 The product contract is:
 - `Cmd+Shift+2` starts a region capture flow that feels close to macOS `Cmd+Shift+4`; if the default cannot be registered, the app falls back to `Cmd+Shift+0`.
 - The selected screen region is captured as an image and made available to the app pipeline.
-- PaddleOCR reads the captured image locally.
+- Apple Vision reads the captured image by default on supported macOS versions; local PaddleOCR remains selectable.
 - The clipboard ends with recognized text when OCR succeeds.
 - If OCR fails, the app must preserve useful user state: keep the captured image available when possible, write a diagnostic event, and expose the failure from the menu bar status.
 
@@ -62,7 +62,7 @@ These are starting defaults, not permanent decisions:
 - macOS host: Swift/AppKit menu bar app.
 - Hotkey: global `Cmd+Shift+2` by default with `Cmd+Shift+0` fallback, implemented through a native global shortcut path validated by a spike.
 - Capture: region capture using a native macOS API or a minimal helper path, with permission handling documented before production polish.
-- OCR: local PaddleOCR only, called through a Python sidecar/venv until a better minimal integration is proven.
+- OCR: Apple Vision by default on supported macOS versions; local PaddleOCR remains available through the Python sidecar/venv.
 - OCR profile: Korean-first mixed Korean/English, CPU-only by default.
 - Clipboard: write recognized text on OCR success; preserve or expose captured image on failure.
 
@@ -113,7 +113,7 @@ Patch this `AGENTS.md` only when a feedback entry proves that a durable reposito
 Before marking the goal complete, audit every user requirement against direct evidence:
 
 - `Cmd+Shift+2` capture flow works on macOS, with `Cmd+Shift+0` fallback when the default is unavailable.
-- PaddleOCR reads captured image text locally.
+- Apple Vision reads captured image text by default on supported macOS versions, with local PaddleOCR still selectable.
 - Clipboard contains OCR text after success.
 - Menu bar app behavior is implemented.
 - Research, filtered decisions, tech stack, BDD/TDD plan, quantitative fixtures, debugging strategy, roadmap, and feedback loop are documented.

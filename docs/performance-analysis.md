@@ -279,4 +279,6 @@ Counter-evidence from the same engine-comparison cycle:
 - `fixtures/stage-bench/dense-doc.png`: Vision 1682 ms vs PaddleOCR 2241 ms and preserved numbered-list spacing better in a single run.
 - 20 controlled OCR fixtures through Vision, one repeat each: 20/20 within existing per-fixture thresholds, median CER 0.0, mean CER 0.0031, max CER 0.0625, median elapsed 256 ms.
 
-Decision: Do not replace the default engine yet. Keep PaddleOCR as default and keep Vision as an optional fast engine until a representative real-screen corpus compares both engines with stable quality gates.
+Decision at the time: Do not replace the default engine yet. Keep PaddleOCR as default and keep Vision as an optional fast engine until a representative real-screen corpus compares both engines with stable quality gates.
+
+2026-06-17 update: D-0021 supersedes this default-engine decision by user direction. Apple Vision is now the default on supported macOS versions, while PaddleOCR remains selectable and the representative real-screen corpus gate remains open as residual quality risk.

@@ -19,6 +19,9 @@ struct SettingsWindowLayoutSmoke {
 
         assert(!store.settings.showDebugProgress, "progress popup defaults off")
         assert(!store.settings.automaticUpdateChecks, "automatic update checks default off")
+        assert(store.settings.ocrEngine == expectedDefaultEngine(), "OCR engine defaults to Vision when available")
+        assert(missingEngineSettings().ocrEngine == expectedDefaultEngine(), "missing OCR engine decodes to the current default")
+        assert(explicitPaddleSettings().ocrEngine == .paddleOCR, "explicit PaddleOCR engine selection is preserved")
         assert(window.styleMask.contains(.resizable), "settings window is resizable")
         assert(window.minSize.width >= 640, "settings window has practical minimum width")
         assert(findView(root, identifier: "settings.sidebar") != nil, "sidebar exists")
@@ -51,21 +54,42 @@ struct SettingsWindowLayoutSmoke {
         guard let paddleSection = findView(root, identifier: "settings.section.paddle") else {
             fail("paddle section exists on engine page")
         }
-        assert(!paddleSection.isHidden, "paddle section is visible for PaddleOCR")
+        assert(
+            paddleSection.isHidden == (expectedDefaultEngine() != .paddleOCR),
+            "paddle section initial visibility follows default engine"
+        )
 
         if let enginePopup = findView(root, identifier: "settings.control.engine") as? NSPopUpButton,
            enginePopup.numberOfItems > 1,
            enginePopup.item(at: 1)?.isEnabled == true {
+            enginePopup.selectItem(at: 0)
+            _ = enginePopup.sendAction(enginePopup.action, to: enginePopup.target)
+            assert(!paddleSection.isHidden, "paddle section shows for PaddleOCR")
+
             enginePopup.selectItem(at: 1)
             _ = enginePopup.sendAction(enginePopup.action, to: enginePopup.target)
             assert(paddleSection.isHidden, "paddle section hides for non-Paddle engine")
-
-            enginePopup.selectItem(at: 0)
-            _ = enginePopup.sendAction(enginePopup.action, to: enginePopup.target)
-            assert(!paddleSection.isHidden, "paddle section returns for PaddleOCR")
         }
 
         print("PASS settings window two-pane layout smoke")
+    }
+
+    private static func expectedDefaultEngine() -> OCREngineChoice {
+        OCREngineChoice.normalizedForCurrentPlatform(.vision)
+    }
+
+    private static func missingEngineSettings() -> AppSettings {
+        let data = """
+        {"saveScreenshots":true,"saveTextResults":true}
+        """.data(using: .utf8)!
+        return try! JSONDecoder().decode(AppSettings.self, from: data)
+    }
+
+    private static func explicitPaddleSettings() -> AppSettings {
+        let data = """
+        {"ocrEngine":"paddleocr"}
+        """.data(using: .utf8)!
+        return try! JSONDecoder().decode(AppSettings.self, from: data)
     }
 
     private static func activateSidebar(_ identifier: String, root: NSView) {

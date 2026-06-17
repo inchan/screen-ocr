@@ -2,14 +2,15 @@
 
 macOS menu bar utility for region OCR.
 
-When the app is running, press `Cmd+Shift+2`, drag a screen region, and release. If the default shortcut cannot be registered, the app falls back to `Cmd+Shift+0`. The app captures the region with ScreenCaptureKit, runs local PaddleOCR, and writes the recognized text to the macOS clipboard.
+When the app is running, press `Cmd+Shift+2`, drag a screen region, and release. If the default shortcut cannot be registered, the app falls back to `Cmd+Shift+0`. The app captures the region with ScreenCaptureKit, runs Apple Vision OCR by default on supported macOS versions, and writes the recognized text to the macOS clipboard. Local PaddleOCR remains selectable in Settings.
 
 ## Stack
 
 - Swift/AppKit menu bar host
 - Carbon `RegisterEventHotKey` for `Cmd+Shift+2`, with `Cmd+Shift+0` fallback
 - ScreenCaptureKit region capture with a direct macOS 15.2+ path and a macOS 14+ filter/sourceRect fallback
-- Python 3.12 PaddleOCR sidecar using `paddleocr==3.6.0` and `paddlepaddle==3.3.0`
+- Apple Vision OCR as the default engine on supported macOS versions
+- Python 3.12 PaddleOCR sidecar using `paddleocr==3.6.0` and `paddlepaddle==3.3.0` as the local selectable engine
 
 ## Setup
 
@@ -18,7 +19,7 @@ scripts/setup_ocr_env.sh
 scripts/verify_ocr_runtime.sh
 ```
 
-The local OCR runtime lives in `.venv-ocr`. The default system `python3` is not used because the current local default is outside PaddlePaddle's supported macOS Python range.
+The local PaddleOCR runtime lives in `.venv-ocr`. The default system `python3` is not used because the current local default is outside PaddlePaddle's supported macOS Python range. Fresh settings default to Apple Vision when available.
 
 ## Docs
 
