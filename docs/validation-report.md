@@ -2,6 +2,53 @@
 
 Last updated: 2026-06-17.
 
+## 2026-06-17 Cycle: Vision default OCR engine
+
+Scope: Change fresh/default OCR settings to Apple Vision on supported macOS
+versions while preserving explicit PaddleOCR selections and keeping PaddleOCR
+available as the local sidecar engine.
+
+Red check before implementation:
+- `bash scripts/run_settings_window_layout_smoke.sh` failed with
+  `FAIL OCR engine defaults to Vision when available` after adding the new
+  default-engine assertions.
+
+Verification evidence:
+- `bash scripts/run_settings_window_layout_smoke.sh` passed after the
+  implementation. It now verifies that fresh settings default to Vision when
+  available, missing `ocrEngine` settings decode to the current default,
+  explicit `paddleocr` settings remain preserved, and the Paddle worker section
+  visibility follows the selected engine.
+- `swift run ScreenOCRSmoke engine-bench fixtures/ocr/mixed-ko-en-simple.png --engine vision --repeats 1`
+  passed. Vision returned `OCR 테스트\nHello 123` in 253 ms with two lines.
+- `swift build --product ScreenOCRApp` passed. Existing warnings remain the
+  known `String(cString:)` deprecation and macOS 14 `CGDisplayStream`
+  deprecation warning.
+- `scripts/check_docs_links.py` passed with 52 local documentation links
+  checked.
+- Required gate: `scripts/agent_gate.sh` exited `AGENT_GATE=FAIL` with the
+  known single host-toolchain failure:
+  `swift test unavailable because xctest is not installed or xcode-select does not point at a full Xcode`.
+  The remaining gate checks passed, including required-file checks
+  (`required_files=12`), documentation link validation, fixture corpus
+  validation, AppKit layout smokes, Swift product builds, local
+  bundle/signature verification, OCR environment check, and Python sidecar
+  tests (`30 tests`, 0 failures).
+
+Implementation evidence:
+- `AppSettings` now defaults `ocrEngine` to `.vision`; platform normalization
+  still falls back to PaddleOCR if Vision is unavailable.
+- Existing settings that explicitly encode `"ocrEngine":"paddleocr"` remain
+  PaddleOCR. Settings files without `ocrEngine` now decode to the current
+  default.
+- `VERSION` is advanced to `0.0.6` so merging the PR to `main` triggers the
+  unsigned release workflow for `v0.0.6`.
+- `AGENTS.md`, `README.md`, `docs/spec.md`, `docs/decisions.md`,
+  `docs/test-plan.md`, `docs/autonomous-system.md`,
+  `docs/completion-audit.md`, `docs/roadmap.md`, and
+  `docs/performance-analysis.md` now describe Vision as the default engine and
+  PaddleOCR as selectable residual coverage.
+
 ## 2026-06-17 Cycle: Hotkey default/fallback and permission guide focus
 
 Scope: Change the capture shortcut policy to default `Cmd+Shift+2` with
@@ -532,7 +579,7 @@ Next verification step (macOS host): run `swift test`, `swift build --product Sc
 
 ## Current Claim
 
-The repository has an autonomous operating-system layer, a tested core OCR pipeline, a local PaddleOCR sidecar, an optional Apple Vision OCR engine, a local `.app` bundle build, and a macOS menu bar utility whose scripted end-to-end smoke verifies `Cmd+Shift+2` -> drag selection -> ScreenCaptureKit capture -> OCR -> clipboard, with `Cmd+Shift+0` retained as startup fallback. PaddleOCR remains the default engine; Apple Vision is selectable for fast in-process OCR while its default-replacement quality gate remains open.
+The repository has an autonomous operating-system layer, a tested core OCR pipeline, an Apple Vision default OCR path on supported macOS versions, a selectable local PaddleOCR sidecar, a local `.app` bundle build, and a macOS menu bar utility whose scripted end-to-end smoke verifies `Cmd+Shift+2` -> drag selection -> ScreenCaptureKit capture -> OCR -> clipboard, with `Cmd+Shift+0` retained as startup fallback. PaddleOCR remains available for cases where Vision quality regresses.
 
 ## Evidence To Collect
 

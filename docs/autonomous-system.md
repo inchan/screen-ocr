@@ -4,7 +4,7 @@ This document explains how agents should keep the project moving without waiting
 
 ## Target Result
 
-Build and verify a macOS menu bar screen OCR utility that captures a selected screen region with `Cmd+Shift+2` by default, falls back to `Cmd+Shift+0` when needed, runs local PaddleOCR, and writes recognized text to the clipboard.
+Build and verify a macOS menu bar screen OCR utility that captures a selected screen region with `Cmd+Shift+2` by default, falls back to `Cmd+Shift+0` when needed, runs Apple Vision OCR by default on supported macOS versions, keeps local PaddleOCR selectable, and writes recognized text to the clipboard.
 
 ## Operating Loop
 

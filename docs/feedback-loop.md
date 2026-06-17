@@ -389,3 +389,21 @@ Adjustment: Add `docs/script-inventory.md`, link it from `README.md`, and run
 and script discoverability stay checked.
 
 Status: adopted
+
+### 2026-06-17 Default Engine Changes Are Product Contract Changes
+
+Observation: Changing the default OCR engine affects more than one setting
+initializer; it changes the product contract, completion audit, release copy,
+and historical decision status.
+
+Evidence: The request to make Vision the default required updates to
+`AGENTS.md`, `docs/spec.md`, `docs/decisions.md`, `docs/test-plan.md`,
+`docs/completion-audit.md`, `docs/release-unsigned.md`, and the settings window
+smoke, not just `AppSettings.ocrEngine`.
+
+Adjustment: Treat default engine changes like shortcut changes: add a behavior
+smoke before implementation, update decisions/spec/release docs in the same
+cycle, and explicitly document residual OCR quality risk when the representative
+real-screen corpus gate is still open.
+
+Status: adopted

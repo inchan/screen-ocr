@@ -55,7 +55,7 @@ Exit criteria:
 - OCR success writes text to clipboard.
 - Permission failures are visible and actionable.
 
-Current status: MVP workflow verified locally. `ScreenOCRApp` builds with menu bar item, verified hotkey registration, Screen Recording preflight/request, transparent region selection overlay, ScreenCaptureKit capture adapter, fixture OCR-to-pasteboard path, and real capture-to-OCR pipeline wiring. Noninteractive real screen capture/OCR/clipboard smoke passes through `ScreenOCRSmoke`; scripted `Cmd+Shift+2` hotkey-to-selection-to-clipboard smoke passes through `scripts/run_hotkey_smoke.sh`; 20-cycle hotkey reliability passes through `scripts/run_hotkey_reliability.sh`; forced macOS 14 ScreenCaptureKit filter/sourceRect capture passes through `scripts/run_legacy_capture_smoke.sh`. Packaging polish and real-world corpus verification remain.
+Current status: MVP workflow verified locally. `ScreenOCRApp` builds with menu bar item, verified hotkey registration, Screen Recording preflight/request, transparent region selection overlay, ScreenCaptureKit capture adapter, Vision-default OCR selection with PaddleOCR still selectable, fixture OCR-to-pasteboard path, and real capture-to-OCR pipeline wiring. Noninteractive real screen capture/OCR/clipboard smoke passes through `ScreenOCRSmoke`; scripted `Cmd+Shift+2` hotkey-to-selection-to-clipboard smoke passes through `scripts/run_hotkey_smoke.sh`; 20-cycle hotkey reliability passes through `scripts/run_hotkey_reliability.sh`; forced macOS 14 ScreenCaptureKit filter/sourceRect capture passes through `scripts/run_legacy_capture_smoke.sh`. Packaging polish and real-world corpus verification remain.
 
 ## Phase 5: Packaging And Product Verification
 

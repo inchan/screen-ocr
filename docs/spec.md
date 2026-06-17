@@ -2,7 +2,7 @@
 
 ## Product
 
-Screen OCR is a macOS menu bar utility that captures a selected screen region, recognizes text with local PaddleOCR, and copies recognized text to the clipboard.
+Screen OCR is a macOS menu bar utility that captures a selected screen region, recognizes text with Apple Vision by default on supported macOS versions, and copies recognized text to the clipboard. Local PaddleOCR remains selectable.
 
 ## Users
 
@@ -14,7 +14,7 @@ Primary user: a macOS user who repeatedly needs to extract Korean and English te
 2. The app starts a region selection capture flow if the shortcut is registered.
 3. The user selects a rectangular screen region.
 4. The app obtains an image for that region.
-5. The OCR sidecar reads the image with local PaddleOCR.
+5. The selected OCR engine reads the image. Fresh settings use Apple Vision on supported macOS versions; PaddleOCR remains available as a local sidecar engine.
 6. The app normalizes recognized text.
 7. The app writes recognized text to the clipboard.
 8. The app briefly shows `📋 Copied to clipboard` below the menu bar item when clipboard copy succeeds.
@@ -28,7 +28,7 @@ Primary user: a macOS user who repeatedly needs to extract Korean and English te
 - Settings > General shows app version and update controls at the bottom. Automatic update checks default to off. Manual checks are always user initiated, automatic download/install is disabled, and installing a prepared update requires an explicit install/restart action.
 - Default shortcut: `Cmd+Shift+2` through `RegisterEventHotKey`; fallback shortcut: `Cmd+Shift+0` when the default cannot be registered. If a user explicitly records `Cmd+Shift+0` in Settings, it is preserved as that user's configured shortcut rather than treated as automatic fallback.
 - Capture: ScreenCaptureKit region capture. The implementation uses direct display-agnostic rect capture on macOS 15.2+ and a display-filter/sourceRect fallback for macOS 14+.
-- OCR: local Python PaddleOCR sidecar by default; Apple Vision may be selected on macOS where the Vision framework is available.
+- OCR: Apple Vision by default on macOS where the Vision framework is available; local Python PaddleOCR sidecar remains selectable.
 - Default language profile: Korean plus English.
 - Distribution target: unauthenticated `.app` zip distribution is supported through an ad-hoc signed, non-notarized embedded runtime bundle. It keeps both PaddleOCR and Apple Vision selectable. macOS Gatekeeper warning and manual user approval are expected without Developer ID signing/notarization.
 
@@ -38,7 +38,7 @@ Primary user: a macOS user who repeatedly needs to extract Korean and English te
 - Each OCR request is bounded by a hard timeout. On timeout the worker process is terminated and the next request restarts it, so a hung worker never freezes the menu-bar app.
 - Before starting PaddleOCR capture or prewarming, the app checks that the selected OCR runtime can launch, reports a missing/incompatible/broken runtime as `OCR 설치 필요`, writes diagnostics, and shows an install/setup alert instead of surfacing a raw Python worker error.
 - The worker response carries `text` and per-line `{text, score}`; it omits detection `box` polygons because the app does not consume them. The one-shot `screen_ocr_sidecar.ocr` CLI still emits `box`.
-- Settings expose the OCR engine. PaddleOCR remains the default; Apple Vision is disabled on platforms where Vision is unavailable.
+- Settings expose the OCR engine. Apple Vision is the default on platforms where Vision is available; unsupported platforms normalize the default back to PaddleOCR.
 - Updates are checked through a Sparkle appcast, not the GitHub Releases API. GitHub Releases host the downloadable unsigned artifact; `docs/appcast.xml` is the stable feed served through GitHub Pages. Automatic update checks are only supported from an installed app under `/Applications`; other locations should show a move-to-Applications guidance state instead of starting Sparkle.
 - When PaddleOCR is selected, settings expose a Paddle worker-count control. The default `Auto` mode does not set `SCREEN_OCR_REC_WORKERS`, so the Python worker uses its safe in-process recognizer path. Numeric values set `SCREEN_OCR_REC_WORKERS` for the next Paddle worker process and opt into recognizer parallelism.
 
@@ -86,7 +86,7 @@ Feature: Screen region OCR
   Scenario: Successful region OCR copies text
     Given the app is running in the menu bar
     And screen capture permission is available
-    And PaddleOCR is installed locally
+    And the selected OCR engine is available
     When the user presses Cmd+Shift+2
     And selects a region containing "Hello 123"
     Then the clipboard should contain "Hello 123"
@@ -95,7 +95,7 @@ Feature: Screen region OCR
 
   Scenario: OCR failure preserves useful state
     Given the app captured a selected region
-    When PaddleOCR fails
+    When OCR fails
     Then the app should report the failure
     And the app should preserve the captured image when feasible
     And diagnostics should include the OCR command, error, and elapsed time

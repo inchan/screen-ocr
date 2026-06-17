@@ -70,7 +70,7 @@ struct AppSettings: Codable, Equatable {
     /// When on, the step-by-step OCR progress popup (per-stage timings) is shown. Off by default:
     /// ordinary users only see a single-line completion toast.
     var showDebugProgress: Bool
-    /// OCR engine used for text recognition. Defaults to PaddleOCR for backward compatibility.
+    /// OCR engine used for text recognition. Defaults to Apple Vision when the platform supports it.
     var ocrEngine: OCREngineChoice
     /// PaddleOCR recognizer worker count. `nil` means Auto: use the Python sidecar's safe
     /// single-process default. Numeric values opt into recognizer parallelism.
@@ -90,7 +90,7 @@ struct AppSettings: Codable, Equatable {
         hotkey: HotkeyConfig = .default,
         hotkeyAutoFallback: Bool = false,
         showDebugProgress: Bool = false,
-        ocrEngine: OCREngineChoice = .paddleOCR,
+        ocrEngine: OCREngineChoice = .vision,
         paddleOCRWorkerCount: Int? = nil,
         automaticUpdateChecks: Bool = false
     ) {

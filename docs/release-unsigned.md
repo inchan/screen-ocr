@@ -5,8 +5,8 @@
 Distribute Screen OCR without an Apple Developer account, Developer ID
 certificate, or notarization, while keeping both OCR engines available:
 
+- Apple Vision is the default OCR engine on supported macOS versions.
 - PaddleOCR remains available through the embedded Python/Paddle runtime.
-- Apple Vision remains selectable on supported macOS versions.
 
 ## User Experience
 
