@@ -2,6 +2,80 @@
 
 Last updated: 2026-06-17.
 
+## 2026-06-17 Cycle: Hotkey default/fallback and permission guide focus
+
+Scope: Change the capture shortcut policy to default `Cmd+Shift+2` with
+`Cmd+Shift+0` fallback, and prevent the Screen Recording permission drag guide
+from stealing keyboard focus from System Settings authentication prompts.
+
+Verification evidence:
+- `bash scripts/run_hotkey_recorder_layout_smoke.sh` passed. It now verifies:
+  default `⇧⌘2`, fallback `⇧⌘0`, default-registration-failure fallback policy,
+  startup retry of the new default when a stored automatic fallback shortcut is
+  present, and preservation of a user-selected `⇧⌘0` shortcut.
+- `bash scripts/run_permission_drop_panel_smoke.sh` passed. It now verifies the
+  helper panel uses `.nonactivatingPanel` and cannot become key or main, while
+  preserving the draggable app icon, left arrow, and minimal instruction text.
+- `bash -n scripts/run_hotkey_smoke.sh scripts/run_capture_alignment_smoke.sh scripts/agent_gate.sh`
+  passed after updating scripted hotkey synthesis to `Cmd+Shift+2`.
+- `swift build --product ScreenOCRApp` passed. Existing warnings remain the
+  known `String(cString:)` deprecation and macOS 14 `CGDisplayStream`
+  deprecation warning.
+- `scripts/check_docs_links.py` passed with 52 local documentation links
+  checked after adding `docs/script-inventory.md`.
+- Required gate: `scripts/agent_gate.sh` exited `AGENT_GATE=FAIL` with the
+  known single host-toolchain failure:
+  `swift test unavailable because xctest is not installed or xcode-select does not point at a full Xcode`.
+  The remaining gate checks passed, including required-file checks
+  (`required_files=12`), spec keyword checks for `Cmd+Shift+2` and
+  `Cmd+Shift+0`, documentation link validation, fixture corpus validation,
+  AppKit layout smokes, Swift product builds, local bundle/signature
+  verification, OCR environment check, and Python sidecar tests (`30 tests`, 0
+  failures).
+- After `agent_gate` rebuilt the non-embedded development bundle, the final
+  release bundle was restored with
+  `SCREEN_OCR_EMBED_RUNTIME=1 SCREEN_OCR_CODESIGN_IDENTITY=- scripts/build_app_bundle.sh`.
+  Final `scripts/verify_app_bundle.sh`,
+  `scripts/verify_embedded_runtime_bundle.sh`, and
+  `scripts/verify_app_signature.sh` all passed for `dist/Screen OCR.app`.
+- `scripts/run_embedded_fixture_smoke.sh` passed for `dist/Screen OCR.app` with
+  clipboard text `OCR테스트\nHello 123`; the post-smoke DiagnosticReports check
+  found no new `Python-*.ips` paths.
+- `/Applications/Screen OCR.app` was replaced with the fixed 0.0.5 bundle. The
+  previous 0.0.4 app was preserved at
+  `/Applications/Screen OCR.app.backup-0.0.4-20260617114639`; the superseded
+  intermediate 0.0.5 candidate was preserved at
+  `/Applications/Screen OCR.app.backup-0.0.5-20260617115224`.
+- Installed app checks passed: `CFBundleShortVersionString=0.0.5`,
+  `scripts/verify_embedded_runtime_bundle.sh '/Applications/Screen OCR.app'`,
+  `scripts/verify_app_signature.sh '/Applications/Screen OCR.app'`, and
+  `scripts/run_embedded_fixture_smoke.sh '/Applications/Screen OCR.app'`.
+  The installed app bundle size is `857M`, and the installed-app post-smoke
+  DiagnosticReports check found no new `Python-*.ips` paths.
+- Final local artifact:
+  `dist/release/Screen-OCR-v0.0.5-unsigned-macos-arm64.zip`
+  (`247M`, SHA-256
+  `e05de33d98873571403d62f4e6673450bb1c1229d1648c6dc36bad9b3ad53b7a`).
+  `shasum -a 256 -c dist/release/Screen-OCR-v0.0.5-unsigned-macos-arm64.zip.sha256`
+  passed.
+
+Implementation evidence:
+- `HotkeyConfig.default` is now `⇧⌘2`; `HotkeyConfig.fallback` is `⇧⌘0`.
+- Startup registration tries `⇧⌘2` first for the default or an automatic
+  fallback state. If `⇧⌘2` is refused, it registers and persists `⇧⌘0` with an
+  automatic-fallback flag.
+- Legacy settings files that store `⇧⌘0` without the new fallback flag migrate
+  as automatic fallback. User-selected `⇧⌘0` writes the flag as false, so it is
+  preserved as the configured shortcut on later launches.
+- User-recorded custom shortcuts do not silently fall back on failure; they
+  still revert to the previously registered shortcut.
+- `PermissionDropPanel` subclasses `NSPanel` with `canBecomeKey=false` and
+  `canBecomeMain=false`, and uses `orderFrontRegardless()` instead of
+  `makeKeyAndOrderFront`.
+- `README.md` now links the primary docs, and `docs/script-inventory.md`
+  classifies gate, release, smoke, benchmark, and manual experiment scripts so
+  retained probes are documented instead of orphaned.
+
 ## 2026-06-17 Cycle: Embedded Python crash-dialog containment
 
 Scope: Stop repeated macOS "Python quit unexpectedly" dialogs from the embedded
@@ -458,7 +532,7 @@ Next verification step (macOS host): run `swift test`, `swift build --product Sc
 
 ## Current Claim
 
-The repository has an autonomous operating-system layer, a tested core OCR pipeline, a local PaddleOCR sidecar, an optional Apple Vision OCR engine, a local `.app` bundle build, and a macOS menu bar utility whose scripted end-to-end smoke verifies `Cmd+Shift+0` -> drag selection -> ScreenCaptureKit capture -> OCR -> clipboard. PaddleOCR remains the default engine; Apple Vision is selectable for fast in-process OCR while its default-replacement quality gate remains open.
+The repository has an autonomous operating-system layer, a tested core OCR pipeline, a local PaddleOCR sidecar, an optional Apple Vision OCR engine, a local `.app` bundle build, and a macOS menu bar utility whose scripted end-to-end smoke verifies `Cmd+Shift+2` -> drag selection -> ScreenCaptureKit capture -> OCR -> clipboard, with `Cmd+Shift+0` retained as startup fallback. PaddleOCR remains the default engine; Apple Vision is selectable for fast in-process OCR while its default-replacement quality gate remains open.
 
 ## Evidence To Collect
 

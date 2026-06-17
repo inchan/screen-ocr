@@ -51,7 +51,7 @@ final class ScreenOCRApp: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         configureStatusItem()
         installHotKeyHandler()
-        _ = applyHotkey(settingsStore.settings.hotkey)
+        _ = applyStartupHotkey()
         syncLaunchAtLoginState()
         configureUpdater()
         startRetentionSweep()
@@ -261,6 +261,40 @@ final class ScreenOCRApp: NSObject, NSApplicationDelegate {
             )
             return false
         }
+    }
+
+    /// First-launch default is ⇧⌘2. Automatic fallback to ⇧⌘0 is flagged separately so a
+    /// user-selected ⇧⌘0 remains a normal custom shortcut on later launches.
+    @discardableResult
+    private func applyStartupHotkey() -> Bool {
+        let storedSettings = settingsStore.settings
+        let preferred = HotkeyConfig.startupPreferredCandidate(
+            for: storedSettings.hotkey,
+            autoFallback: storedSettings.hotkeyAutoFallback
+        )
+        if applyHotkey(preferred) {
+            if preferred != storedSettings.hotkey || storedSettings.hotkeyAutoFallback {
+                settingsStore.update {
+                    $0.hotkey = preferred
+                    $0.hotkeyAutoFallback = false
+                }
+            }
+            return true
+        }
+
+        guard let fallback = HotkeyConfig.fallbackCandidate(afterRegistrationFailureOf: preferred),
+              applyHotkey(fallback) else {
+            return false
+        }
+        settingsStore.update {
+            $0.hotkey = fallback
+            $0.hotkeyAutoFallback = true
+        }
+        writeAppStatus(
+            status: "hotkey_registered",
+            details: ["shortcut": fallback.displayString, "fallback_from": preferred.displayString]
+        )
+        return true
     }
 
     private func handleHotKey() {
@@ -778,7 +812,7 @@ final class ScreenOCRApp: NSObject, NSApplicationDelegate {
                 hotKeyRef = nil
             }
         } else if hotKeyRef == nil {
-            _ = applyHotkey(settingsStore.settings.hotkey)
+            _ = applyStartupHotkey()
         }
     }
 
@@ -1239,7 +1273,7 @@ final class ScreenOCRApp: NSObject, NSApplicationDelegate {
         updateStatus("Checking OCR runtime...")
         writeWorkerStatus(
             status: "checking_runtime",
-            details: ["shortcut": "Cmd+Shift+0", "paddle_rec_workers": workerCountLabel],
+            details: ["shortcut": settingsStore.settings.hotkey.displayString, "paddle_rec_workers": workerCountLabel],
             paths: paths
         )
 
@@ -1252,7 +1286,7 @@ final class ScreenOCRApp: NSObject, NSApplicationDelegate {
             self.updateStatus("Warming OCR...")
             self.writeWorkerStatus(
                 status: "warming",
-                details: ["shortcut": "Cmd+Shift+0", "paddle_rec_workers": workerCountLabel],
+                details: ["shortcut": settingsStore.settings.hotkey.displayString, "paddle_rec_workers": workerCountLabel],
                 paths: paths
             )
 
@@ -1274,7 +1308,7 @@ final class ScreenOCRApp: NSObject, NSApplicationDelegate {
                     }
                 }
 
-                updateStatus("Ready - Cmd+Shift+0")
+                updateStatus("Ready - \(self.settingsStore.settings.hotkey.displayString)")
                 writeWorkerStatus(status: "ready", details: details, paths: paths)
             } catch {
                 updateStatus("OCR worker failed")

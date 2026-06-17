@@ -32,12 +32,27 @@ struct HotkeyConfig: Codable, Equatable {
     var modifiers: UInt32
     var displayString: String
 
-    /// Default capture shortcut: ⇧⌘0.
+    /// Default capture shortcut: ⇧⌘2.
     static let `default` = HotkeyConfig(
+        keyCode: UInt32(kVK_ANSI_2),
+        modifiers: UInt32(cmdKey | shiftKey),
+        displayString: "⇧⌘2"
+    )
+
+    /// Fallback used only when the first-launch default shortcut is unavailable.
+    static let fallback = HotkeyConfig(
         keyCode: UInt32(kVK_ANSI_0),
         modifiers: UInt32(cmdKey | shiftKey),
         displayString: "⇧⌘0"
     )
+
+    static func fallbackCandidate(afterRegistrationFailureOf config: HotkeyConfig) -> HotkeyConfig? {
+        config == .default ? .fallback : nil
+    }
+
+    static func startupPreferredCandidate(for storedConfig: HotkeyConfig, autoFallback: Bool) -> HotkeyConfig {
+        autoFallback && storedConfig == .fallback ? .default : storedConfig
+    }
 }
 
 /// Persisted user preferences. Codable so the whole struct round-trips through settings.json;
@@ -50,6 +65,8 @@ struct AppSettings: Codable, Equatable {
     var retentionDays: Int
     var launchAtLogin: Bool
     var hotkey: HotkeyConfig
+    /// True only when the app persisted `hotkey` as an automatic fallback from the default.
+    var hotkeyAutoFallback: Bool
     /// When on, the step-by-step OCR progress popup (per-stage timings) is shown. Off by default:
     /// ordinary users only see a single-line completion toast.
     var showDebugProgress: Bool
@@ -71,6 +88,7 @@ struct AppSettings: Codable, Equatable {
         retentionDays: Int = 1,
         launchAtLogin: Bool = false,
         hotkey: HotkeyConfig = .default,
+        hotkeyAutoFallback: Bool = false,
         showDebugProgress: Bool = false,
         ocrEngine: OCREngineChoice = .paddleOCR,
         paddleOCRWorkerCount: Int? = nil,
@@ -82,6 +100,7 @@ struct AppSettings: Codable, Equatable {
         self.retentionDays = retentionDays
         self.launchAtLogin = launchAtLogin
         self.hotkey = hotkey
+        self.hotkeyAutoFallback = hotkeyAutoFallback
         self.showDebugProgress = showDebugProgress
         self.ocrEngine = OCREngineChoice.normalizedForCurrentPlatform(ocrEngine)
         self.paddleOCRWorkerCount = Self.normalizedPaddleOCRWorkerCount(paddleOCRWorkerCount)
@@ -90,7 +109,7 @@ struct AppSettings: Codable, Equatable {
 
     // Decode defensively: a missing key falls back to its default rather than failing the load.
     enum CodingKeys: String, CodingKey {
-        case saveScreenshots, saveTextResults, saveDirectoryPath, retentionDays, launchAtLogin, hotkey, showDebugProgress, ocrEngine, paddleOCRWorkerCount, automaticUpdateChecks
+        case saveScreenshots, saveTextResults, saveDirectoryPath, retentionDays, launchAtLogin, hotkey, hotkeyAutoFallback, showDebugProgress, ocrEngine, paddleOCRWorkerCount, automaticUpdateChecks
     }
 
     init(from decoder: Decoder) throws {
@@ -102,6 +121,7 @@ struct AppSettings: Codable, Equatable {
         retentionDays = try container.decodeIfPresent(Int.self, forKey: .retentionDays) ?? defaults.retentionDays
         launchAtLogin = try container.decodeIfPresent(Bool.self, forKey: .launchAtLogin) ?? defaults.launchAtLogin
         hotkey = try container.decodeIfPresent(HotkeyConfig.self, forKey: .hotkey) ?? defaults.hotkey
+        hotkeyAutoFallback = try container.decodeIfPresent(Bool.self, forKey: .hotkeyAutoFallback) ?? (hotkey == .fallback)
         showDebugProgress = try container.decodeIfPresent(Bool.self, forKey: .showDebugProgress) ?? defaults.showDebugProgress
         let decodedEngine = try container.decodeIfPresent(OCREngineChoice.self, forKey: .ocrEngine) ?? defaults.ocrEngine
         ocrEngine = OCREngineChoice.normalizedForCurrentPlatform(decodedEngine)

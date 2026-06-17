@@ -4,7 +4,7 @@ This document explains how agents should keep the project moving without waiting
 
 ## Target Result
 
-Build and verify a macOS menu bar screen OCR utility that captures a selected screen region with `Cmd+Shift+0`, runs local PaddleOCR, and writes recognized text to the clipboard.
+Build and verify a macOS menu bar screen OCR utility that captures a selected screen region with `Cmd+Shift+2` by default, falls back to `Cmd+Shift+0` when needed, runs local PaddleOCR, and writes recognized text to the clipboard.
 
 ## Operating Loop
 
@@ -17,7 +17,8 @@ Build and verify a macOS menu bar screen OCR utility that captures a selected sc
 7. Implement the minimum code for that test.
 8. Verify with targeted commands and record evidence.
 9. Run `scripts/agent_gate.sh`.
-10. Add feedback if the loop exposed a process gap.
+10. Keep executable entry points listed in `docs/script-inventory.md`.
+11. Add feedback if the loop exposed a process gap.
 
 ## Stop Conditions
 
@@ -46,4 +47,3 @@ Parallelize only independent work:
 - Verification can run beside docs cleanup after implementation has a stable target.
 
 Keep implementation write scopes disjoint when delegating. The leader owns integration and final verification.
-

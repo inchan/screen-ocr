@@ -703,7 +703,10 @@ final class SettingsWindowController: NSWindowController {
             return false
         }
         hideHotkeyToast()
-        store.update { $0.hotkey = candidate }
+        store.update {
+            $0.hotkey = candidate
+            $0.hotkeyAutoFallback = false
+        }
         return true
     }
 

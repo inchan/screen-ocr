@@ -13,6 +13,7 @@ required_files=(
   "docs/test-plan.md"
   "docs/roadmap.md"
   "docs/debugging.md"
+  "docs/script-inventory.md"
   "docs/feedback-loop.md"
   "docs/validation-report.md"
   "docs/completion-audit.md"
@@ -64,7 +65,8 @@ check_contains "AGENTS.md" "Phase Gates" "AGENTS declares phase gates"
 check_contains "AGENTS.md" "Parallel Work" "AGENTS declares parallel work policy"
 check_contains "AGENTS.md" "Test And Metrics Contract" "AGENTS declares test and metrics contract"
 check_contains "AGENTS.md" "Self-Feedback And Growth" "AGENTS declares self-feedback growth"
-check_contains "docs/spec.md" "Cmd\\+Shift\\+0" "spec covers Cmd+Shift+0"
+check_contains "docs/spec.md" "Cmd\\+Shift\\+2" "spec covers Cmd+Shift+2"
+check_contains "docs/spec.md" "Cmd\\+Shift\\+0" "spec covers Cmd+Shift+0 fallback"
 check_contains "docs/spec.md" "clipboard" "spec covers clipboard behavior"
 check_contains "docs/spec.md" "PaddleOCR" "spec covers PaddleOCR"
 check_contains "docs/test-plan.md" "character error rate" "test plan covers OCR quality metric"
@@ -73,6 +75,16 @@ check_contains "docs/roadmap.md" "Phase 0" "roadmap has Phase 0"
 check_contains "docs/feedback-loop.md" "Status: adopted" "feedback loop has adopted entry"
 check_contains "docs/research.md" "https://" "research log contains source links"
 check_contains "docs/completion-audit.md" "Requirement Coverage" "completion audit maps requirements to evidence"
+
+if [[ -x "scripts/check_docs_links.py" ]]; then
+  if scripts/check_docs_links.py; then
+    pass "documentation links"
+  else
+    fail "documentation links"
+  fi
+else
+  fail "scripts/check_docs_links.py is missing or not executable"
+fi
 
 if [[ -f "fixtures/ocr/manifest.json" ]]; then
   fixture_count="$(ruby -rjson -e 'print JSON.parse(File.read(ARGV.fetch(0))).fetch("fixtures").size' fixtures/ocr/manifest.json)"

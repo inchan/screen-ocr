@@ -343,3 +343,49 @@ explicit numeric worker count to opt into multiprocessing, and include a
 DiagnosticReports marker check in embedded release-candidate validation.
 
 Status: adopted
+
+### 2026-06-17 Shortcut Contract Must Track User-Facing Defaults
+
+Observation: The repository contract, smoke scripts, and docs can drift from the
+actual user-facing default shortcut when the product shortcut changes.
+
+Evidence: The user changed the default shortcut to `Cmd+Shift+2` with
+`Cmd+Shift+0` fallback, while `AGENTS.md`, `docs/spec.md`, `docs/test-plan.md`,
+and the hotkey smoke still described or synthesized `Cmd+Shift+0`.
+
+Adjustment: Treat shortcut changes as product-contract changes: update
+`AGENTS.md`, decisions, spec, smoke scripts, and the agent gate together. Keep a
+pure startup-policy smoke assertion for default/fallback behavior so the
+shortcut cannot drift through UI copy alone.
+
+Status: adopted
+
+### 2026-06-17 Permission Helper Must Not Become Key
+
+Observation: A permission helper panel can block System Settings password entry
+if it becomes the key/main window after the user drags the app icon.
+
+Evidence: User install feedback reported that after opening Settings > Capture >
+permission settings and dragging the app into System Settings, numeric password
+input did not reach the system prompt until the guide view was closed.
+
+Adjustment: The permission guide panel must be nonactivating and unable to
+become key/main. The permission panel smoke now asserts those properties.
+
+Status: adopted
+
+### 2026-06-17 Documentation Links And Script Inventory Need A Gate
+
+Observation: As the project accumulated release, smoke, benchmark, and
+experiment scripts, some useful manual probes were not linked from any current
+document and could be mistaken for disposable orphans.
+
+Evidence: Local reference counting showed unlinked docs and `scripts/exp_*`
+probes. The first documentation link check was manual and found only seven
+linked targets before README and the script inventory were added.
+
+Adjustment: Add `docs/script-inventory.md`, link it from `README.md`, and run
+`scripts/check_docs_links.py` from `scripts/agent_gate.sh` so local doc links
+and script discoverability stay checked.
+
+Status: adopted

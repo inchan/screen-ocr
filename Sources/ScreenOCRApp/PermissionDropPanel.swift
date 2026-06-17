@@ -1,8 +1,13 @@
 import AppKit
 
+final class PermissionDropPanel: NSPanel {
+    override var canBecomeKey: Bool { false }
+    override var canBecomeMain: Bool { false }
+}
+
 /// Floating helper shown next to System Settings when Screen Recording permission is missing:
 /// the app icon can be dragged straight into the Settings permission list (the list accepts
-/// app-bundle file drops), which beats hunting for the app in a file picker. Codex-style UX.
+/// app-bundle file drops), which beats hunting for the app in a file picker.
 @MainActor
 final class PermissionDropPanelController {
     private var panel: NSPanel?
@@ -10,12 +15,12 @@ final class PermissionDropPanelController {
 
     func show() {
         if let panel {
-            panel.makeKeyAndOrderFront(nil)
+            panel.orderFrontRegardless()
             return
         }
 
         let size = CGSize(width: 340, height: 224)
-        let panel = NSPanel(
+        let panel = PermissionDropPanel(
             contentRect: CGRect(origin: .zero, size: size),
             styleMask: [.titled, .closable, .nonactivatingPanel],
             backing: .buffered,
@@ -34,7 +39,7 @@ final class PermissionDropPanelController {
 
         panel.contentView = content
         panel.center()
-        panel.makeKeyAndOrderFront(nil)
+        panel.orderFrontRegardless()
         self.panel = panel
         snapBesideSystemSettings()
     }

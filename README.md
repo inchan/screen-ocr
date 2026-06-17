@@ -2,12 +2,12 @@
 
 macOS menu bar utility for region OCR.
 
-When the app is running, press `Cmd+Shift+0`, drag a screen region, and release. The app captures the region with ScreenCaptureKit, runs local PaddleOCR, and writes the recognized text to the macOS clipboard.
+When the app is running, press `Cmd+Shift+2`, drag a screen region, and release. If the default shortcut cannot be registered, the app falls back to `Cmd+Shift+0`. The app captures the region with ScreenCaptureKit, runs local PaddleOCR, and writes the recognized text to the macOS clipboard.
 
 ## Stack
 
 - Swift/AppKit menu bar host
-- Carbon `RegisterEventHotKey` for `Cmd+Shift+0`
+- Carbon `RegisterEventHotKey` for `Cmd+Shift+2`, with `Cmd+Shift+0` fallback
 - ScreenCaptureKit region capture with a direct macOS 15.2+ path and a macOS 14+ filter/sourceRect fallback
 - Python 3.12 PaddleOCR sidecar using `paddleocr==3.6.0` and `paddlepaddle==3.3.0`
 
@@ -20,9 +20,19 @@ scripts/verify_ocr_runtime.sh
 
 The local OCR runtime lives in `.venv-ocr`. The default system `python3` is not used because the current local default is outside PaddlePaddle's supported macOS Python range.
 
+## Docs
+
+- [Specification](docs/spec.md)
+- [Decisions](docs/decisions.md)
+- [Test Plan](docs/test-plan.md)
+- [Validation Report](docs/validation-report.md)
+- [Unsigned Release](docs/release-unsigned.md)
+- [Script Inventory](docs/script-inventory.md)
+- [Completion Audit](docs/completion-audit.md)
+
 ## Debug Outputs
 
-Every `Cmd+Shift+0` capture writes a paired debug copy under `artifacts/debug-runs/`:
+Every capture writes a paired debug copy under `artifacts/debug-runs/`:
 
 - `<run-id>.png`: captured screenshot
 - `<run-id>.txt`: OCR text copied from that screenshot
@@ -35,7 +45,7 @@ Every `Cmd+Shift+0` capture writes a paired debug copy under `artifacts/debug-ru
 scripts/run_app.sh
 ```
 
-The first real capture may require macOS Screen Recording permission. After granting it, run the app again and press `Cmd+Shift+0`.
+The first real capture may require macOS Screen Recording permission. After granting it, run the app again and press `Cmd+Shift+2`.
 
 ## Build Local App Bundle
 
@@ -93,7 +103,7 @@ scripts/final_acceptance.sh
 ```
 
 `scripts/run_hotkey_smoke.sh` sends real local keyboard and mouse events, so it requires Accessibility permission for the terminal/Codex host process.
-`scripts/run_capture_alignment_smoke.sh` opens a fixture with red/green/blue/yellow corner markers, triggers `Cmd+Shift+0`, drags the content area, and verifies the saved debug PNG by pixel quadrant. Use it when changing selection or ScreenCaptureKit coordinates:
+`scripts/run_capture_alignment_smoke.sh` opens a fixture with red/green/blue/yellow corner markers, triggers `Cmd+Shift+2`, drags the content area, and verifies the saved debug PNG by pixel quadrant. Use it when changing selection or ScreenCaptureKit coordinates:
 
 ```sh
 scripts/run_capture_alignment_smoke.sh

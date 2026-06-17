@@ -4,7 +4,7 @@ Last updated: 2026-06-05.
 
 ## Verdict
 
-The local MVP is complete for the requested utility shape: a macOS menu bar app can register `Cmd+Shift+0`, accept a dragged region, capture that region, run local PaddleOCR, and copy recognized text to the clipboard.
+The local MVP is complete for the requested utility shape: a macOS menu bar app can register `Cmd+Shift+2` by default with `Cmd+Shift+0` fallback, accept a dragged region, capture that region, run local PaddleOCR, and copy recognized text to the clipboard.
 
 This is not yet a notarized public distribution release. An unsigned/ad-hoc GitHub Release path now exists, but Gatekeeper manual approval is expected. A real macOS 14 host smoke and a representative real-world screenshot corpus remain release-readiness work.
 
@@ -23,7 +23,7 @@ This is not yet a notarized public distribution release. An unsigned/ad-hoc GitH
 | Define roadmap from exploration through verification | `docs/roadmap.md` | Complete |
 | Define and use a feedback loop | `docs/feedback-loop.md`, new checks added to `scripts/agent_gate.sh` as issues were found | Complete |
 | Parallelize independent work where useful | PaddleOCR and Apple API research were split and integrated into `docs/research.md`; final verification is script-orchestrated | Complete |
-| `Cmd+Shift+0` starts region capture | `scripts/run_hotkey_smoke.sh`, `artifacts/acceptance/latest-normal-hotkey-smoke.json` | Complete |
+| `Cmd+Shift+2` starts region capture, with `Cmd+Shift+0` fallback when needed | `scripts/run_hotkey_smoke.sh`, `artifacts/acceptance/latest-normal-hotkey-smoke.json`, `scripts/run_hotkey_recorder_layout_smoke.sh` | Complete |
 | PaddleOCR reads the captured region text | `sidecar/screen_ocr_sidecar/ocr.py`, OCR fixture benchmark, screen/hotkey smokes | Complete |
 | OCR text is copied to clipboard | `scripts/run_screen_smoke.sh`, `scripts/run_hotkey_smoke.sh`, `scripts/run_embedded_fixture_smoke.sh` | Complete |
 | Mac app shape is a menu-bar utility | `dist/Screen OCR.app`, `scripts/verify_app_bundle.sh`, `scripts/run_app_bundle_smoke.sh` | Complete |

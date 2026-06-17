@@ -58,7 +58,7 @@ Rejected: Legacy `CGWindowListCreateImage`, `CGDisplayStream`, or shelling out t
 
 Status: accepted
 
-Decision: Register `Cmd+Shift+0` through `RegisterEventHotKey` and surface registration failure as a normal app state.
+Decision: Register `Cmd+Shift+2` through `RegisterEventHotKey` as the default capture shortcut. If the default cannot be registered on startup, fall back to `Cmd+Shift+0` and surface registration failure as a normal app state if neither shortcut can be registered. Persist automatic fallback separately from user-recorded shortcuts so a user-selected `Cmd+Shift+0` remains stable.
 
 Reason: It is the smallest known global hotkey path that avoids default Accessibility/Input Monitoring requirements.
 
