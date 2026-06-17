@@ -95,7 +95,9 @@ fi
 if [[ -f "Package.swift" ]]; then
   if command -v swift >/dev/null 2>&1; then
     note "Running swift test because Package.swift exists..."
-    if swift test; then
+    if ! xcrun --find xctest >/dev/null 2>&1; then
+      fail "swift test unavailable because xctest is not installed or xcode-select does not point at a full Xcode"
+    elif swift test; then
       pass "swift test"
     else
       fail "swift test"

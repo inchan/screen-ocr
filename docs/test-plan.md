@@ -14,7 +14,8 @@ Use vertical BDD/TDD slices. Add one behavior-level test, make it pass with the 
 - Packaging smoke: signed local build checks once distribution starts.
 - Local bundle smoke: build `dist/Screen OCR.app`, verify `Info.plist` menu-bar metadata, run the bundle executable outside the repo root, and confirm hotkey registration diagnostics.
 - Local signature smoke: ad-hoc sign the local bundle, verify strict code signature/resource seal, and rerun bundle launch smoke.
-- Embedded OCR-resource smoke: build with `SCREEN_OCR_EMBED_RUNTIME=1`, verify bundled OCR packages/sidecar/fixtures, run fixture OCR from bundle resources, and confirm clipboard text.
+- Embedded OCR-resource smoke: build with `SCREEN_OCR_EMBED_RUNTIME=1`, verify bundled OCR packages/sidecar/fixtures, reject Python.framework links to build-machine paths, run fixture OCR from bundle resources, and confirm clipboard text.
+- OCR runtime setup smoke: when PaddleOCR's Python runtime, sidecar, version, modules, or embedded framework links are missing or incompatible, verify the app reports `OCR 설치 필요`, writes worker diagnostics, and shows install/setup guidance instead of a raw Python error.
 - Version smoke: direct region capture on macOS 15.2+ and fallback ScreenCaptureKit filter/sourceRect capture on macOS 14+.
 - Legacy capture smoke: force the macOS 14 ScreenCaptureKit filter/sourceRect path with `SCREEN_OCR_FORCE_LEGACY_CAPTURE=1` and verify hotkey-to-clipboard behavior.
 - Noninteractive screen smoke: render known text, capture it through ScreenCaptureKit, OCR it with PaddleOCR, and verify clipboard text.

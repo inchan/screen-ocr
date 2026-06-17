@@ -36,6 +36,7 @@ Primary user: a macOS user who repeatedly needs to extract Korean and English te
 
 - The app reuses a long-lived PaddleOCR worker over JSONL (one request, one newline-delimited response). The Swift client reads responses with a buffered line reader.
 - Each OCR request is bounded by a hard timeout. On timeout the worker process is terminated and the next request restarts it, so a hung worker never freezes the menu-bar app.
+- Before starting PaddleOCR capture or prewarming, the app checks that the selected OCR runtime can launch, reports a missing/incompatible/broken runtime as `OCR 설치 필요`, writes diagnostics, and shows an install/setup alert instead of surfacing a raw Python worker error.
 - The worker response carries `text` and per-line `{text, score}`; it omits detection `box` polygons because the app does not consume them. The one-shot `screen_ocr_sidecar.ocr` CLI still emits `box`.
 - Settings expose the OCR engine. PaddleOCR remains the default; Apple Vision is disabled on platforms where Vision is unavailable.
 - Updates are checked through a Sparkle appcast, not the GitHub Releases API. GitHub Releases host the downloadable unsigned artifact; `docs/appcast.xml` is the stable feed served through GitHub Pages. Automatic update checks are only supported from an installed app under `/Applications`; other locations should show a move-to-Applications guidance state instead of starting Sparkle.

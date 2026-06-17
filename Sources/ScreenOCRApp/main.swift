@@ -24,6 +24,9 @@ final class ScreenOCRApp: NSObject, NSApplicationDelegate {
     private let selectionOverlay = SelectionOverlayController()
     private var persistentOCR: PersistentPythonSidecarOCR?
     private var persistentOCRWorkerCount: Int?
+    private var ocrRuntimeIsValid = false
+    private var ocrRuntimeIssue: OCRRuntimeIssue?
+    private var ocrRuntimeAlertShown = false
     private let copyToastPresenter = CopyToastPresenter()
 
     // Serial OCR queue: region selection runs immediately per hotkey, but the captured images
@@ -291,12 +294,16 @@ final class ScreenOCRApp: NSObject, NSApplicationDelegate {
         )
         updateStatus("Capture requested")
 
+        let paths = runtimePaths()
+        guard await ensureOCRRuntimeAvailable(paths: paths, showAlert: true) else {
+            return
+        }
+
         guard ensureScreenCapturePermission() else {
             return
         }
 
         updateStatus("Select a region...")
-        let paths = runtimePaths()
         let capture = ScreenCaptureKitImageCapture(
             outputDirectory: paths.captureOutputDirectory,
             selectRegion: { [self] in
@@ -317,6 +324,10 @@ final class ScreenOCRApp: NSObject, NSApplicationDelegate {
 
     private func runFixtureOCRFlow() async {
         let paths = runtimePaths()
+        guard await ensureOCRRuntimeAvailable(paths: paths, showAlert: true) else {
+            return
+        }
+
         let image = CapturedImage(
             id: "fixture://mixed-ko-en-simple",
             width: 640,
@@ -1224,16 +1235,27 @@ final class ScreenOCRApp: NSObject, NSApplicationDelegate {
 
     private func prewarmOCRWorker() {
         let paths = runtimePaths()
-        let ocr = ocrRecognizer(paths: paths)
         let workerCountLabel = paddleWorkerCountLabel()
-        updateStatus("Warming OCR...")
+        updateStatus("Checking OCR runtime...")
         writeWorkerStatus(
-            status: "warming",
+            status: "checking_runtime",
             details: ["shortcut": "Cmd+Shift+0", "paddle_rec_workers": workerCountLabel],
             paths: paths
         )
 
         Task {
+            guard await self.ensureOCRRuntimeAvailable(paths: paths, showAlert: true) else {
+                return
+            }
+
+            let ocr = self.ocrRecognizer(paths: paths)
+            self.updateStatus("Warming OCR...")
+            self.writeWorkerStatus(
+                status: "warming",
+                details: ["shortcut": "Cmd+Shift+0", "paddle_rec_workers": workerCountLabel],
+                paths: paths
+            )
+
             let started = Date()
             do {
                 let ready = try await ocr.prewarm()
@@ -1262,6 +1284,80 @@ final class ScreenOCRApp: NSObject, NSApplicationDelegate {
                     paths: paths
                 )
             }
+        }
+    }
+
+    private func ensureOCRRuntimeAvailable(paths: AppRuntimePaths, showAlert: Bool) async -> Bool {
+        guard settingsStore.settings.ocrEngine == .paddleOCR else {
+            return true
+        }
+        if ocrRuntimeIsValid {
+            return true
+        }
+        if let ocrRuntimeIssue {
+            handleOCRRuntimeIssue(ocrRuntimeIssue, paths: paths, showAlert: showAlert)
+            return false
+        }
+
+        if let issue = await OCRRuntimePreflight.check(paths: paths) {
+            ocrRuntimeIssue = issue
+            handleOCRRuntimeIssue(issue, paths: paths, showAlert: showAlert)
+            return false
+        }
+
+        ocrRuntimeIsValid = true
+        return true
+    }
+
+    private func handleOCRRuntimeIssue(
+        _ issue: OCRRuntimeIssue,
+        paths: AppRuntimePaths,
+        showAlert: Bool
+    ) {
+        updateStatus(issue.statusText)
+        var details: [String: String] = [
+            "reason": issue.reason.rawValue,
+            "detail": issue.detail,
+            "python_executable": paths.pythonExecutable.path,
+            "sidecar_directory": paths.sidecarDirectory.path,
+            "paddle_rec_workers": paddleWorkerCountLabel()
+        ]
+        if let exitCode = issue.exitCode {
+            details["exit_code"] = "\(exitCode)"
+        }
+        if !issue.missingModules.isEmpty {
+            details["missing_modules"] = issue.missingModules.joined(separator: ",")
+        }
+        writeWorkerStatus(status: "runtime_setup_required", details: details, paths: paths)
+
+        if showAlert {
+            showOCRRuntimeIssueAlert(issue)
+        }
+    }
+
+    private func showOCRRuntimeIssueAlert(_ issue: OCRRuntimeIssue) {
+        guard !ocrRuntimeAlertShown else { return }
+        ocrRuntimeAlertShown = true
+
+        NSApp.activate(ignoringOtherApps: true)
+
+        let alert = NSAlert()
+        alert.messageText = issue.alertTitle
+        var informativeText = "\(issue.userFacingDetail)\n\n\(issue.recoverySuggestion ?? "")"
+        if !issue.detail.isEmpty {
+            informativeText += "\n\n진단: \(Self.firstLine(issue.detail, limit: 500))"
+        }
+        alert.informativeText = informativeText
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "확인")
+        if issue.shouldOfferReleasePage {
+            alert.addButton(withTitle: "릴리즈 페이지 열기")
+        }
+
+        if alert.runModal() == .alertSecondButtonReturn,
+           issue.shouldOfferReleasePage,
+           let url = URL(string: "https://github.com/inchan/screen-ocr/releases") {
+            NSWorkspace.shared.open(url)
         }
     }
 
@@ -1346,7 +1442,7 @@ final class ScreenOCRApp: NSObject, NSApplicationDelegate {
     }
 }
 
-private struct AppRuntimePaths {
+private struct AppRuntimePaths: Sendable {
     let pythonExecutable: URL
     let sidecarDirectory: URL
     let fixtureImage: URL
@@ -1358,6 +1454,134 @@ private struct AppRuntimePaths {
 
     var debugOutputDirectory: URL {
         artifactsRoot.appendingPathComponent("debug-runs", isDirectory: true)
+    }
+}
+
+private struct OCRRuntimePreflightPayload: Decodable {
+    let pythonVersion: String?
+    let missingModules: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case pythonVersion = "python_version"
+        case missingModules = "missing_modules"
+    }
+}
+
+private enum OCRRuntimePreflight {
+    static func check(paths: AppRuntimePaths) async -> OCRRuntimeIssue? {
+        await Task.detached(priority: .utility) {
+            runCheck(paths: paths)
+        }.value
+    }
+
+    private static func runCheck(paths: AppRuntimePaths) -> OCRRuntimeIssue? {
+        let fileManager = FileManager.default
+        guard fileManager.isExecutableFile(atPath: paths.pythonExecutable.path) else {
+            return .missingPython(path: paths.pythonExecutable.path)
+        }
+
+        let sidecarPackage = paths.sidecarDirectory.appendingPathComponent("screen_ocr_sidecar")
+        guard fileManager.fileExists(atPath: sidecarPackage.path) else {
+            return .missingSidecar(path: sidecarPackage.path)
+        }
+
+        return runPythonRuntimeCheck(paths: paths)
+    }
+
+    private static func runPythonRuntimeCheck(paths: AppRuntimePaths) -> OCRRuntimeIssue? {
+        let process = Process()
+        process.executableURL = paths.pythonExecutable
+        process.arguments = [
+            "-c",
+            """
+            import importlib.util
+            import json
+            import sys
+
+            required = ["paddleocr", "paddle", "screen_ocr_sidecar.worker"]
+            missing = [name for name in required if importlib.util.find_spec(name) is None]
+            version = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
+            print(json.dumps({"python_version": version, "missing_modules": missing}))
+            if not ((3, 9) <= (sys.version_info.major, sys.version_info.minor) <= (3, 13)):
+                raise SystemExit(43)
+            if missing:
+                raise SystemExit(42)
+            """
+        ]
+
+        var environment = ProcessInfo.processInfo.environment
+        environment["PYTHONPATH"] = paths.sidecarDirectory.path
+        environment["PYTHONDONTWRITEBYTECODE"] = "1"
+        environment["PYTHONNOUSERSITE"] = "1"
+        process.environment = environment
+
+        let stdout = Pipe()
+        let stderr = Pipe()
+        process.standardOutput = stdout
+        process.standardError = stderr
+
+        do {
+            try process.run()
+        } catch {
+            return OCRRuntimeIssue(
+                reason: .runtimeCheckFailed,
+                detail: error.localizedDescription
+            )
+        }
+
+        let timeoutMs = 5_000
+        let deadline = Date().addingTimeInterval(Double(timeoutMs) / 1000.0)
+        while process.isRunning && Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.05)
+        }
+        if process.isRunning {
+            let processID = process.processIdentifier
+            process.terminate()
+            Thread.sleep(forTimeInterval: 0.2)
+            if process.isRunning {
+                kill(processID, SIGKILL)
+            }
+            process.waitUntilExit()
+            return .runtimeCheckTimedOut(ms: timeoutMs)
+        }
+
+        let stdoutText = readText(from: stdout)
+        let stderrText = readText(from: stderr)
+        let payload = decodePayload(stdoutText)
+
+        if process.terminationStatus == 0 {
+            return nil
+        }
+
+        if let payload, !payload.missingModules.isEmpty {
+            return .missingModules(payload.missingModules)
+        }
+
+        if let payload, process.terminationStatus == 43 {
+            return .incompatiblePython(version: payload.pythonVersion ?? "unknown")
+        }
+
+        return .classifyRuntimeCheckFailure(
+            exitCode: process.terminationStatus,
+            stdout: stdoutText,
+            stderr: stderrText
+        )
+    }
+
+    private static func readText(from pipe: Pipe) -> String {
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        return String(data: data, encoding: .utf8) ?? ""
+    }
+
+    private static func decodePayload(_ stdout: String) -> OCRRuntimePreflightPayload? {
+        guard let line = stdout
+            .split(separator: "\n", omittingEmptySubsequences: true)
+            .last
+            .map(String.init),
+            let data = line.data(using: .utf8) else {
+            return nil
+        }
+        return try? JSONDecoder().decode(OCRRuntimePreflightPayload.self, from: data)
     }
 }
 

@@ -283,3 +283,42 @@ when possible. `scripts/verify_app_bundle.sh` now rejects Sparkle-enabled
 bundles unless silent automatic update installation remains disabled.
 
 Status: adopted
+
+### 2026-06-16 Embedded Python Launchers Need Complete Link Checks
+
+Observation: Verifying only `Python.framework/Versions/<version>/bin/python*`
+does not prove the embedded runtime is relocatable. The framework also carries
+`Resources/Python.app/Contents/MacOS/Python`, which can retain an absolute
+build-machine Homebrew framework link.
+
+Evidence: The installed 0.0.3 app failed OCR worker startup on this Mac with
+`Persistent OCR worker closed its output unexpectedly`. Running
+`scripts/verify_embedded_runtime_bundle.sh '/Applications/Screen OCR.app'`
+after strengthening the check showed that
+`Resources/Python.app/Contents/MacOS/Python` linked to
+`/opt/homebrew/Cellar/python@3.12/3.12.13_2/Frameworks/Python.framework/...`.
+
+Adjustment: Patch every embedded Python launcher that links to
+`Python.framework`, verify all of those binaries before executing the runtime
+smoke, and show a user-facing `OCR 설치 필요` alert when PaddleOCR runtime
+preflight fails.
+
+Status: adopted
+
+### 2026-06-17 XCTest Availability Must Be Checked Directly
+
+Observation: On a macOS host with only Command Line Tools selected, `swift
+build` can pass while `swift test` fails before test execution because `xctest`
+is unavailable. Treating that as an ordinary test failure obscures the required
+fix.
+
+Evidence: `xcode-select -p` returned `/Library/Developer/CommandLineTools`,
+`xcrun --find xctest` failed, and `swift test` failed with `no such module
+'XCTest'` before running any test. After `.venv-ocr` was prepared, all
+non-XCTest `agent_gate` checks passed and only the XCTest availability failure
+remained.
+
+Adjustment: `scripts/agent_gate.sh` now checks `xcrun --find xctest` before
+running `swift test` and reports the missing full-Xcode test runner explicitly.
+
+Status: adopted
