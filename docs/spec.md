@@ -40,7 +40,7 @@ Primary user: a macOS user who repeatedly needs to extract Korean and English te
 - The worker response carries `text` and per-line `{text, score}`; it omits detection `box` polygons because the app does not consume them. The one-shot `screen_ocr_sidecar.ocr` CLI still emits `box`.
 - Settings expose the OCR engine. PaddleOCR remains the default; Apple Vision is disabled on platforms where Vision is unavailable.
 - Updates are checked through a Sparkle appcast, not the GitHub Releases API. GitHub Releases host the downloadable unsigned artifact; `docs/appcast.xml` is the stable feed served through GitHub Pages. Automatic update checks are only supported from an installed app under `/Applications`; other locations should show a move-to-Applications guidance state instead of starting Sparkle.
-- When PaddleOCR is selected, settings expose a Paddle worker-count control. The default `Auto` mode does not set `SCREEN_OCR_REC_WORKERS`, so the Python worker uses its existing CPU-count heuristic. Numeric values set `SCREEN_OCR_REC_WORKERS` for the next Paddle worker process.
+- When PaddleOCR is selected, settings expose a Paddle worker-count control. The default `Auto` mode does not set `SCREEN_OCR_REC_WORKERS`, so the Python worker uses its safe in-process recognizer path. Numeric values set `SCREEN_OCR_REC_WORKERS` for the next Paddle worker process and opt into recognizer parallelism.
 
 ### Configuration knobs (environment variables)
 

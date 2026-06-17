@@ -225,9 +225,9 @@ Rejected: Keep documenting `736` as the current production default. It is now hi
 
 Status: accepted
 
-Decision: Add a PaddleOCR-only worker-count setting with `Auto` as the default. `Auto` omits `SCREEN_OCR_REC_WORKERS` so the Python sidecar keeps using its current CPU-count heuristic; numeric selections set `SCREEN_OCR_REC_WORKERS` for the next Paddle worker process. Apple Vision remains selectable only when the platform supports Vision.
+Decision: Add a PaddleOCR-only worker-count setting with `Auto` as the default. `Auto` omits `SCREEN_OCR_REC_WORKERS`; the Python sidecar treats the unset value as a safe single-recognizer-process default. Numeric selections set `SCREEN_OCR_REC_WORKERS` for the next Paddle worker process and opt into recognizer parallelism. Apple Vision remains selectable only when the platform supports Vision.
 
-Reason: Recent engine experiments showed PaddleOCR quality/speed depends on worker behavior, and users need a safe way to tune the recognizer pool without editing environment variables. Keeping `Auto` as the default preserves the existing CPU-derived behavior and avoids changing current performance unexpectedly.
+Reason: Recent engine experiments showed PaddleOCR quality/speed depends on worker behavior, and users need a safe way to tune the recognizer pool without editing environment variables. However, the embedded macOS runtime produced repeated "Python quit unexpectedly" dialogs when Paddle recognizer child processes crashed during shutdown. Keeping `Auto` as a single-process safe default prevents crash-dialog floods; advanced users can still choose a numeric count for speed.
 
 Constraint: Worker lifecycle controls are PaddleOCR-only. Vision is in-process and has no recognizer pool, so the worker-count control must be hidden unless PaddleOCR is selected. Unsupported platforms must not allow Vision to become the active engine.
 

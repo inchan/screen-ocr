@@ -55,8 +55,8 @@ struct AppSettings: Codable, Equatable {
     var showDebugProgress: Bool
     /// OCR engine used for text recognition. Defaults to PaddleOCR for backward compatibility.
     var ocrEngine: OCREngineChoice
-    /// PaddleOCR recognizer worker count. `nil` means Auto: let the Python sidecar derive it
-    /// from CPU count using its existing `_default_workers()` heuristic.
+    /// PaddleOCR recognizer worker count. `nil` means Auto: use the Python sidecar's safe
+    /// single-process default. Numeric values opt into recognizer parallelism.
     var paddleOCRWorkerCount: Int?
     /// Sparkle automatic update checks. Off by default because this unsigned build may still
     /// require Gatekeeper approval or Screen Recording permission re-approval after updating.

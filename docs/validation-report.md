@@ -2,6 +2,80 @@
 
 Last updated: 2026-06-17.
 
+## 2026-06-17 Cycle: Embedded Python crash-dialog containment
+
+Scope: Stop repeated macOS "Python quit unexpectedly" dialogs from the embedded
+PaddleOCR runtime, then rebuild and install a corrected local 0.0.4 candidate.
+
+Root-cause evidence:
+- The installed `/Applications/Screen OCR.app` was still `0.0.3`, but the latest
+  `Python-2026-06-17-103831.ips` crash report pointed at
+  `dist/Screen OCR.app/Contents/Frameworks/Python.framework/.../Python.app/...`
+  with parent process `Python`, exception `EXC_CRASH`, signal `SIGSEGV`.
+- That pattern matched Paddle recognizer child processes spawned by the release
+  candidate smoke, not the earlier 0.0.3 Homebrew-link failure.
+- With `SCREEN_OCR_REC_WORKERS` unset, the previous `Auto` path used a
+  CPU-count heuristic and could spawn up to six recognizer child processes,
+  making one shutdown hazard surface as multiple macOS crash dialogs.
+
+Verification evidence:
+- Red check before implementation:
+  `PYTHONPATH=sidecar .venv-ocr/bin/python -m unittest ...test_parallel_rec_default_worker_count_is_single_process_safe_default ...test_parallel_rec_invalid_worker_count_falls_back_to_safe_default`
+  failed because `_default_workers()` returned `6` instead of `1`.
+- Narrow regression tests after implementation passed, including
+  `test_single_worker_recognizer_runs_without_multiprocessing_pool`.
+- Full sidecar contract suite passed:
+  `PYTHONPATH=sidecar .venv-ocr/bin/python -m unittest sidecar.tests.test_ocr_contract`
+  ran 27 tests with 0 failures.
+- Final sidecar gate suite after the shutdown-path tweak passed:
+  `scripts/run_python_tests.sh` ran 30 tests with 0 failures.
+- `swift build` passed after settings copy/comment updates.
+- `SCREEN_OCR_EMBED_RUNTIME=1 SCREEN_OCR_CODESIGN_IDENTITY=- scripts/build_app_bundle.sh`
+  rebuilt `dist/Screen OCR.app`.
+- `scripts/verify_app_bundle.sh`, `scripts/verify_embedded_runtime_bundle.sh`,
+  and `scripts/verify_app_signature.sh` passed for `dist/Screen OCR.app`.
+- `scripts/run_embedded_fixture_smoke.sh` passed with clipboard text
+  `OCR테스트\nHello 123`.
+- Crash-report check after the dist smoke:
+  `find "$HOME/Library/Logs/DiagnosticReports" -name 'Python-*.ips' -newer artifacts/python-crash-marker -print`
+  returned no paths.
+- `/Applications/Screen OCR.app` was replaced with the fixed 0.0.4 bundle after
+  preserving the old app at
+  `/Applications/Screen OCR.app.backup-0.0.3-20260617104817`.
+- Installed app checks passed:
+  `scripts/verify_embedded_runtime_bundle.sh '/Applications/Screen OCR.app'`,
+  `scripts/verify_app_signature.sh '/Applications/Screen OCR.app'`, and
+  `scripts/run_embedded_fixture_smoke.sh '/Applications/Screen OCR.app'`.
+- Crash-report check after the installed-app smoke found 0 new
+  `Python-*.ips` files, and `ps aux | rg 'ScreenOCRApp|Screen OCR|screen_ocr_sidecar|Python.framework'`
+  showed no lingering app or OCR Python processes.
+- Required gate: `scripts/agent_gate.sh` exited `AGENT_GATE=FAIL` with the
+  known single host-toolchain failure:
+  `swift test unavailable because xctest is not installed or xcode-select does not point at a full Xcode`.
+  The remaining gate checks passed, including AppKit layout smokes, Swift
+  product builds, local bundle/signature verification, OCR environment check,
+  and Python sidecar tests (`30 tests`, 0 failures).
+- After `agent_gate` rebuilt the non-embedded development bundle, the final
+  release bundle was restored with
+  `SCREEN_OCR_EMBED_RUNTIME=1 SCREEN_OCR_CODESIGN_IDENTITY=- scripts/build_app_bundle.sh`.
+  Final `scripts/verify_app_bundle.sh`,
+  `scripts/verify_embedded_runtime_bundle.sh`, `scripts/verify_app_signature.sh`,
+  and `scripts/run_embedded_fixture_smoke.sh` all passed again, and the final
+  post-smoke DiagnosticReports check returned no new `Python-*.ips` paths.
+- Final local artifact, superseding the earlier 0.0.4 candidate below:
+  `dist/release/Screen-OCR-v0.0.4-unsigned-macos-arm64.zip`
+  (`247M`, SHA-256
+  `8361a7438f2394b5924f70b45196d4751657d19d6f37c2a51287e38ca05c753f`).
+
+Implementation evidence:
+- `Auto` now omits `SCREEN_OCR_REC_WORKERS` and the Python sidecar treats the
+  unset value as a safe in-process recognizer path.
+- Numeric worker counts still set `SCREEN_OCR_REC_WORKERS` and opt into the
+  existing multiprocessing recognizer pool for users who choose that tradeoff.
+- Settings copy now labels Auto as the safe default, and the fixture smoke script
+  accepts an absolute app path so installed `/Applications` builds can be
+  verified directly.
+
 ## 2026-06-17 Cycle: 0.0.4 runtime-alert release candidate
 
 Scope: Self-review, fact-check, code-review, apply fixes, and prepare a local

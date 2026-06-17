@@ -16,7 +16,7 @@ from screen_ocr_sidecar.preprocess import preprocess_image_for_ocr, skip_preproc
 
 
 class OCREngine:
-    """Holds the single-process detector and the warmed recognition process pool."""
+    """Holds the single-process detector and the warmed recognition backend."""
 
     def __init__(self, detector: Any, rec_pool: Any) -> None:
         self.detector = detector
@@ -33,10 +33,9 @@ class OCREngine:
 
 def load_ocr() -> OCREngine:
     with contextlib.redirect_stdout(sys.stderr):
-        # Spawn the pool first: its children load their recognizer models concurrently
-        # with the parent's detector construction. The barrier at the end makes "ready"
-        # mean fully warm — previously the first request absorbed the children's
-        # still-running model loads (measured 10.3s vs the 4.8s warm path).
+        # The default recognizer backend is in-process to avoid macOS crash dialogs from
+        # spawned Paddle children during shutdown. Numeric worker counts still opt into
+        # multiprocessing; wait_until_warm is a no-op for the in-process path.
         rec_pool = RecognizerPool()
         detector = create_detector()
         rec_pool.wait_until_warm()

@@ -322,3 +322,24 @@ Adjustment: `scripts/agent_gate.sh` now checks `xcrun --find xctest` before
 running `swift test` and reports the missing full-Xcode test runner explicitly.
 
 Status: adopted
+
+### 2026-06-17 Embedded Paddle Children Need Crash-Report Checks
+
+Observation: A release smoke can pass OCR and still leave user-facing macOS
+"Python quit unexpectedly" dialogs if spawned Paddle recognizer children crash
+during shutdown. The previous `Auto` worker setting amplified the issue by
+spawning multiple recognizer child processes.
+
+Evidence: Recent `Python-2026-06-17-1038xx.ips` reports pointed at the embedded
+`Python.framework/.../Resources/Python.app/.../Python` inside `dist/Screen OCR.app`
+with `EXC_CRASH`/`SIGSEGV` and parent process `Python`. After changing Auto to
+the in-process recognizer path, both `scripts/run_embedded_fixture_smoke.sh` and
+`scripts/run_embedded_fixture_smoke.sh '/Applications/Screen OCR.app'` passed
+and `find "$HOME/Library/Logs/DiagnosticReports" -name 'Python-*.ips' -newer ...`
+returned no new reports.
+
+Adjustment: Treat `Auto` as the safe in-process recognizer default, require an
+explicit numeric worker count to opt into multiprocessing, and include a
+DiagnosticReports marker check in embedded release-candidate validation.
+
+Status: adopted

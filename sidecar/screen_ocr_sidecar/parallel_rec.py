@@ -1,12 +1,11 @@
-"""Parallel text-recognition pool for the persistent worker.
+"""Text-recognition backend for the persistent worker.
 
 Recognition (not detection) dominates the OCR round trip: a dense screen capture
 spends ~7s in the Korean recognizer while detection takes <0.7s. The recognizer is
-single-core bound — MKLDNN, cpu_threads and OMP threads do not scale it — so the
-only loss-free way to cut the wall-clock is to fan the independent line crops across
-several worker processes. Crops are split with a longest-processing-time heuristic
-keyed on crop width (recognition cost is ~linear in the height-48-normalized width),
-which keeps the widest full-screen-width lines from piling onto one worker.
+single-core bound — MKLDNN, cpu_threads and OMP threads do not scale it. Numeric
+worker-count settings can fan independent line crops across several worker processes;
+the default keeps recognition in the persistent worker process to avoid macOS Python
+crash-dialog floods from spawned Paddle children during shutdown.
 """
 from __future__ import annotations
 
@@ -33,15 +32,7 @@ def _default_workers() -> int:
                 return value
         except ValueError:
             pass
-    # cpu-2 leaves headroom for the detector process and the app. Measured on a 10-core
-    # M2 Pro (6P+4E, dense 23-line capture): 4 workers 2372ms e2e, 6 -> 1919ms, 8 -> 1789ms,
-    # 10 -> no further gain. The earlier "4 is best" result did not hold up under the
-    # production-path benchmark (scripts/bench_stage.py); efficiency cores still help
-    # because the LPT width split keeps the long crops on the fast workers.
-    # Capped at 6, not 8: each recognizer process holds ~508MB RSS of Paddle runtime, so
-    # 8 -> 6 returns ~1GB while only the dense case slows (~7%); medium/strip measured equal.
-    cpu = os.cpu_count() or 4
-    return max(1, min(6, cpu - 2))
+    return 1
 
 
 def create_detector(device: str = "cpu") -> Any:
@@ -53,6 +44,16 @@ def create_detector(device: str = "cpu") -> Any:
 
 # --- recognition worker process globals ---
 _REC: Any = None
+
+
+def _load_rec_model(device: str) -> Any:
+    from paddlex import create_model
+
+    with contextlib.redirect_stdout(sys.stderr):
+        rec = create_model(REC_MODEL_NAME, device=device)
+        # Warm the graph with a tiny dummy so the first real request pays no JIT cost.
+        rec.predict([np.zeros((48, 96, 3), dtype=np.uint8)])
+    return rec
 
 
 def _watch_parent(initial_ppid: int) -> None:
@@ -82,28 +83,27 @@ def _rec_init(device: str, warm_counter: Any = None) -> None:
     # has nothing worth finalizing.
     atexit.register(os._exit, 0)
     global _REC
-    from paddlex import create_model
-
-    with contextlib.redirect_stdout(sys.stderr):
-        _REC = create_model(REC_MODEL_NAME, device=device)
-        # Warm the graph with a tiny dummy so the first real request pays no JIT cost.
-        _REC.predict([np.zeros((48, 96, 3), dtype=np.uint8)])
+    _REC = _load_rec_model(device)
     if warm_counter is not None:
         with warm_counter.get_lock():
             warm_counter.value += 1
 
 
-def _rec_chunk(chunk: list[tuple[int, np.ndarray]]) -> list[tuple[int, str, float]]:
+def _recognize_chunk(rec: Any, chunk: list[tuple[int, np.ndarray]]) -> list[tuple[int, str, float]]:
     if not chunk:
         return []
     crops = [crop for _, crop in chunk]
     with contextlib.redirect_stdout(sys.stderr):
-        outputs = list(_REC.predict(crops))
+        outputs = list(rec.predict(crops))
     results: list[tuple[int, str, float]] = []
     for (index, _), output in zip(chunk, outputs):
         data = output.json.get("res", output.json) if hasattr(output, "json") else output
         results.append((index, str(data.get("rec_text", "")), float(data.get("rec_score", 0.0))))
     return results
+
+
+def _rec_chunk(chunk: list[tuple[int, np.ndarray]]) -> list[tuple[int, str, float]]:
+    return _recognize_chunk(_REC, chunk)
 
 
 def _lpt_split(crops: list[np.ndarray], workers: int) -> list[list[tuple[int, np.ndarray]]]:
@@ -133,13 +133,19 @@ def _rec_timeout() -> float:
 
 
 class RecognizerPool:
-    """A warmed pool of recognizer processes. Lives for the worker's lifetime."""
+    """A warmed recognizer backend. Lives for the worker's lifetime."""
 
     def __init__(self, device: str = "cpu", workers: int | None = None) -> None:
         self._device = device
         self._workers = workers or _default_workers()
+        self._single_rec: Any = None
         self._warm_counter: Any = None
-        self._pool = self._spawn_pool()
+        self._pool: Any = None
+        if self._workers <= 1:
+            self._workers = 1
+            self._single_rec = _load_rec_model(self._device)
+        else:
+            self._pool = self._spawn_pool()
 
     def _spawn_pool(self) -> Any:
         ctx = mp.get_context("spawn")
@@ -176,6 +182,9 @@ class RecognizerPool:
     def _restart(self) -> None:
         # A timed-out or broken pool leaves workers in an unknown state; tear it down hard and
         # bring up a fresh one so the *next* request is healthy.
+        if self._pool is None:
+            self._single_rec = _load_rec_model(self._device)
+            return
         try:
             self._pool.terminate()
             self._pool.join()
@@ -190,6 +199,10 @@ class RecognizerPool:
     def recognize(self, crops: list[np.ndarray]) -> list[tuple[str, float]]:
         if not crops:
             return []
+        if self._pool is None:
+            raw_single = _recognize_chunk(self._single_rec, list(enumerate(crops)))
+            return [(text, score) for _, text, score in raw_single]
+
         # One bin per worker (width-balanced) when it pays off, otherwise a single bin. Both
         # go through map_async so the result shape and timeout handling stay uniform.
         if len(crops) > 1 and self._workers > 1:
@@ -215,6 +228,9 @@ class RecognizerPool:
         return [(text, score) for _, text, score in flat]
 
     def close(self) -> None:
+        if self._pool is None:
+            self._single_rec = None
+            return
         self._pool.close()
         self._pool.join()
 
@@ -227,6 +243,11 @@ class RecognizerPool:
         parent alive and therefore their parent-watchdogs silent). If termination doesn't
         finish in time we simply return — once this process exits, every child reaps itself
         within ~2s via its watchdog."""
+
+        if self._pool is None:
+            # The worker process calls os._exit immediately after shutdown(); avoid touching
+            # Paddle native teardown on that crash-dialog-sensitive path.
+            return
 
         def _stop() -> None:
             try:

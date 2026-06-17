@@ -21,7 +21,7 @@ Use vertical BDD/TDD slices. Add one behavior-level test, make it pass with the 
 - Noninteractive screen smoke: render known text, capture it through ScreenCaptureKit, OCR it with PaddleOCR, and verify clipboard text.
 - Scripted hotkey smoke: launch the app and fixture window, synthesize `Cmd+Shift+0`, drag a known region, and verify `capture_ocr_finished` plus clipboard text.
 - Persistent OCR worker smoke: start the worker, wait for ready, run repeated fixture OCR requests through the worker protocol, verify text quality, record ready latency, request median, timeout behavior, and RSS.
-- Persistent OCR worker configuration: verify explicit Paddle worker counts are passed as `SCREEN_OCR_REC_WORKERS`, and `Auto` omits that variable so the Python CPU-count heuristic remains authoritative.
+- Persistent OCR worker configuration: verify explicit Paddle worker counts are passed as `SCREEN_OCR_REC_WORKERS`, and `Auto` omits that variable so the Python sidecar uses its safe single-process default.
 - OCR preprocessing unit/integration: given a large mostly-empty screenshot with two text-like regions, generate a preprocessed PNG after capture and before OCR, verify dimensions shrink with padding, record elapsed time, and verify unsafe/small images fall back to the original path.
 - Clipboard-success toast smoke boundary: verify the successful hotkey path still reaches clipboard and status success; visual toast placement is covered by deterministic frame calculation tests unless a later screenshot-based UI harness is added.
 - Hotkey reliability smoke: repeat the scripted hotkey smoke 20 times and require at least 95% success after permissions are granted.
@@ -89,9 +89,9 @@ Product-readiness candidate gates:
 - OCR preprocessing keeps small-crop behavior unchanged and records `preprocess_elapsed_ms`, original/preprocessed dimensions, and applied/fallback status before claiming large-region speed improvements.
 - Hotkey-to-clipboard success rate at least 95% across 20 repeated runs after permissions are granted.
 - On macOS 15+, normal capture produces no deprecated capture API privacy warning.
-- Unsigned release candidate passes embedded runtime verification, ad-hoc signature verification, zip packaging, and manual Gatekeeper-open documentation checks. Developer ID notarization/stapling checks apply only if a future credentialed distribution path begins.
+- Unsigned release candidate passes embedded runtime verification, ad-hoc signature verification, zip packaging, and manual Gatekeeper-open documentation checks. Embedded fixture smoke should also check that no new macOS `Python-*.ips` crash reports are created. Developer ID notarization/stapling checks apply only if a future credentialed distribution path begins.
 - Default OCR engine changes require a representative real-screen corpus with exact expected text, per-engine CER/latency reports, and no material regression on Korean, English, code-like, dense, and wide-strip cases.
-- Paddle worker-count UI changes must preserve `Auto` as the default and prove that numeric choices affect the next worker process rather than only the settings file.
+- Paddle worker-count UI changes must preserve `Auto` as the default safe single-process mode and prove that numeric choices affect the next worker process rather than only the settings file.
 - Settings row alignment changes must include a layout smoke or screenshot harness that proves custom controls expose sane AppKit baselines instead of relying on visual inspection only.
 - Settings redesign changes must preserve immediate application of existing settings and keep PaddleOCR worker controls visible only on the Engine page while PaddleOCR is selected.
 - Update integration changes must keep automatic update checks off by default, keep Sparkle automatic download/install disabled, verify Sparkle bundle metadata only when update support is explicitly enabled for a build, reject enabled builds without a public key, reject appcast generation without `SPARKLE_PRIVATE_KEY`, and never publish update metadata without an EdDSA signature.
