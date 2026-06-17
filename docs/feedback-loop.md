@@ -283,3 +283,109 @@ when possible. `scripts/verify_app_bundle.sh` now rejects Sparkle-enabled
 bundles unless silent automatic update installation remains disabled.
 
 Status: adopted
+
+### 2026-06-16 Embedded Python Launchers Need Complete Link Checks
+
+Observation: Verifying only `Python.framework/Versions/<version>/bin/python*`
+does not prove the embedded runtime is relocatable. The framework also carries
+`Resources/Python.app/Contents/MacOS/Python`, which can retain an absolute
+build-machine Homebrew framework link.
+
+Evidence: The installed 0.0.3 app failed OCR worker startup on this Mac with
+`Persistent OCR worker closed its output unexpectedly`. Running
+`scripts/verify_embedded_runtime_bundle.sh '/Applications/Screen OCR.app'`
+after strengthening the check showed that
+`Resources/Python.app/Contents/MacOS/Python` linked to
+`/opt/homebrew/Cellar/python@3.12/3.12.13_2/Frameworks/Python.framework/...`.
+
+Adjustment: Patch every embedded Python launcher that links to
+`Python.framework`, verify all of those binaries before executing the runtime
+smoke, and show a user-facing `OCR 설치 필요` alert when PaddleOCR runtime
+preflight fails.
+
+Status: adopted
+
+### 2026-06-17 XCTest Availability Must Be Checked Directly
+
+Observation: On a macOS host with only Command Line Tools selected, `swift
+build` can pass while `swift test` fails before test execution because `xctest`
+is unavailable. Treating that as an ordinary test failure obscures the required
+fix.
+
+Evidence: `xcode-select -p` returned `/Library/Developer/CommandLineTools`,
+`xcrun --find xctest` failed, and `swift test` failed with `no such module
+'XCTest'` before running any test. After `.venv-ocr` was prepared, all
+non-XCTest `agent_gate` checks passed and only the XCTest availability failure
+remained.
+
+Adjustment: `scripts/agent_gate.sh` now checks `xcrun --find xctest` before
+running `swift test` and reports the missing full-Xcode test runner explicitly.
+
+Status: adopted
+
+### 2026-06-17 Embedded Paddle Children Need Crash-Report Checks
+
+Observation: A release smoke can pass OCR and still leave user-facing macOS
+"Python quit unexpectedly" dialogs if spawned Paddle recognizer children crash
+during shutdown. The previous `Auto` worker setting amplified the issue by
+spawning multiple recognizer child processes.
+
+Evidence: Recent `Python-2026-06-17-1038xx.ips` reports pointed at the embedded
+`Python.framework/.../Resources/Python.app/.../Python` inside `dist/Screen OCR.app`
+with `EXC_CRASH`/`SIGSEGV` and parent process `Python`. After changing Auto to
+the in-process recognizer path, both `scripts/run_embedded_fixture_smoke.sh` and
+`scripts/run_embedded_fixture_smoke.sh '/Applications/Screen OCR.app'` passed
+and `find "$HOME/Library/Logs/DiagnosticReports" -name 'Python-*.ips' -newer ...`
+returned no new reports.
+
+Adjustment: Treat `Auto` as the safe in-process recognizer default, require an
+explicit numeric worker count to opt into multiprocessing, and include a
+DiagnosticReports marker check in embedded release-candidate validation.
+
+Status: adopted
+
+### 2026-06-17 Shortcut Contract Must Track User-Facing Defaults
+
+Observation: The repository contract, smoke scripts, and docs can drift from the
+actual user-facing default shortcut when the product shortcut changes.
+
+Evidence: The user changed the default shortcut to `Cmd+Shift+2` with
+`Cmd+Shift+0` fallback, while `AGENTS.md`, `docs/spec.md`, `docs/test-plan.md`,
+and the hotkey smoke still described or synthesized `Cmd+Shift+0`.
+
+Adjustment: Treat shortcut changes as product-contract changes: update
+`AGENTS.md`, decisions, spec, smoke scripts, and the agent gate together. Keep a
+pure startup-policy smoke assertion for default/fallback behavior so the
+shortcut cannot drift through UI copy alone.
+
+Status: adopted
+
+### 2026-06-17 Permission Helper Must Not Become Key
+
+Observation: A permission helper panel can block System Settings password entry
+if it becomes the key/main window after the user drags the app icon.
+
+Evidence: User install feedback reported that after opening Settings > Capture >
+permission settings and dragging the app into System Settings, numeric password
+input did not reach the system prompt until the guide view was closed.
+
+Adjustment: The permission guide panel must be nonactivating and unable to
+become key/main. The permission panel smoke now asserts those properties.
+
+Status: adopted
+
+### 2026-06-17 Documentation Links And Script Inventory Need A Gate
+
+Observation: As the project accumulated release, smoke, benchmark, and
+experiment scripts, some useful manual probes were not linked from any current
+document and could be mistaken for disposable orphans.
+
+Evidence: Local reference counting showed unlinked docs and `scripts/exp_*`
+probes. The first documentation link check was manual and found only seven
+linked targets before README and the script inventory were added.
+
+Adjustment: Add `docs/script-inventory.md`, link it from `README.md`, and run
+`scripts/check_docs_links.py` from `scripts/agent_gate.sh` so local doc links
+and script discoverability stay checked.
+
+Status: adopted

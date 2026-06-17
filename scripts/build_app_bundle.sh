@@ -129,13 +129,24 @@ PY
     exit 1
   }
 
-  # Make the copied framework relocatable. Homebrew and Python.org framework builds link the
-  # launcher to an absolute Python.framework path, which would fail on another Mac.
-  otool -L "$bundled_python_executable" \
-    | awk '/Python\.framework\/Versions\/[0-9.]+\/Python/ { print $1 }' \
-    | while read -r dependency; do
-        install_name_tool -change "$dependency" "@executable_path/../Python" "$bundled_python_executable"
-      done
+  patch_python_framework_dependency() {
+    local binary="$1"
+    local replacement="$2"
+
+    [[ -f "$binary" ]] || return 0
+    otool -L "$binary" \
+      | awk '/Python\.framework\/Versions\/[0-9.]+\/Python/ { print $1 }' \
+      | while read -r dependency; do
+          install_name_tool -change "$dependency" "$replacement" "$binary"
+        done
+  }
+
+  # Make the copied framework relocatable. Homebrew and Python.org framework builds link
+  # launchers to an absolute Python.framework path, which fails on another Mac.
+  patch_python_framework_dependency "$bundled_python_executable" "@executable_path/../Python"
+  patch_python_framework_dependency \
+    "$python_framework_bundle/Versions/$python_version/Resources/Python.app/Contents/MacOS/Python" \
+    "@executable_path/../../../../Python"
   install_name_tool -id "@rpath/Python.framework/Versions/$python_version/Python" "$bundled_python_library"
 
   for python_name in python python3 python3.12; do

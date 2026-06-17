@@ -192,7 +192,7 @@ write_report() {
 
 accessibility_trusted="$(swift -e 'import ApplicationServices; print(AXIsProcessTrusted())')"
 if [[ "$accessibility_trusted" != "true" ]]; then
-  write_report "skipped" "Accessibility permission is required to synthesize Cmd+Shift+0 and drag events."
+  write_report "skipped" "Accessibility permission is required to synthesize Cmd+Shift+2 and drag events."
   exit 2
 fi
 
@@ -237,7 +237,7 @@ while (( SECONDS < deadline )); do
 done
 
 if [[ "${app_status:-}" != "hotkey_registered" ]]; then
-  write_report "failed" "ScreenOCRApp did not register Cmd+Shift+0 within 20 seconds."
+  write_report "failed" "ScreenOCRApp did not register Cmd+Shift+2 within 20 seconds."
   exit 1
 fi
 
@@ -316,9 +316,9 @@ func postMouse(_ type: CGEventType, _ point: CGPoint) {
     let event = CGEvent(mouseEventSource: source, mouseType: type, mouseCursorPosition: point, mouseButton: .left)!
     event.post(tap: .cghidEventTap)
 }
-postKey(29, true)
+postKey(19, true)
 usleep(80_000)
-postKey(29, false)
+postKey(19, false)
 usleep(700_000)
 let start = CGPoint(x: sx, y: sy)
 let end = CGPoint(x: ex, y: ey)

@@ -1,4 +1,6 @@
 import os
+import sys
+import types
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -259,6 +261,55 @@ class OCRContractTests(unittest.TestCase):
 
         self.assertTrue(response["ok"])
         self.assertEqual(response["line_count"], 2)
+
+    def test_parallel_rec_default_worker_count_is_single_process_safe_default(self):
+        from screen_ocr_sidecar.parallel_rec import _default_workers
+
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(_default_workers(), 1)
+
+    def test_single_worker_recognizer_runs_without_multiprocessing_pool(self):
+        import numpy as np
+        from screen_ocr_sidecar import parallel_rec
+
+        class FakeOutput:
+            def __init__(self, text, score):
+                self.json = {"res": {"rec_text": text, "rec_score": score}}
+
+        class FakeRecognizer:
+            def predict(self, crops):
+                return [FakeOutput(f"line-{index}", 0.9) for index, _ in enumerate(crops)]
+
+        fake_paddlex = types.SimpleNamespace(create_model=lambda *_args, **_kwargs: FakeRecognizer())
+
+        with mock.patch.dict(sys.modules, {"paddlex": fake_paddlex}):
+            with mock.patch.object(parallel_rec.mp, "get_context") as get_context:
+                pool = parallel_rec.RecognizerPool(workers=1)
+                self.assertEqual(pool.workers, 1)
+                get_context.assert_not_called()
+                result = pool.recognize(
+                    [
+                        np.zeros((48, 96, 3), dtype=np.uint8),
+                        np.zeros((48, 120, 3), dtype=np.uint8),
+                    ]
+                )
+                pool.shutdown()
+
+        self.assertEqual(result, [("line-0", 0.9), ("line-1", 0.9)])
+
+    def test_parallel_rec_honors_explicit_worker_count(self):
+        from screen_ocr_sidecar.parallel_rec import _default_workers
+
+        with mock.patch.dict(os.environ, {"SCREEN_OCR_REC_WORKERS": "4"}, clear=True):
+            self.assertEqual(_default_workers(), 4)
+
+    def test_parallel_rec_invalid_worker_count_falls_back_to_safe_default(self):
+        from screen_ocr_sidecar.parallel_rec import _default_workers
+
+        for raw in ("0", "-2", "not-a-number"):
+            with self.subTest(raw=raw):
+                with mock.patch.dict(os.environ, {"SCREEN_OCR_REC_WORKERS": raw}, clear=True):
+                    self.assertEqual(_default_workers(), 1)
 
     def test_worker_request_reports_missing_image_path(self):
         response = handle_request({"id": "req-2"}, FakeOCR())

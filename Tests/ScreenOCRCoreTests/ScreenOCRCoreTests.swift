@@ -311,6 +311,41 @@ final class ScreenOCRCoreTests: XCTestCase {
         }
     }
 
+    func testOCRRuntimeIssueShowsInstallGuidanceForMissingRuntime() {
+        let issue = OCRRuntimeIssue.missingPython(
+            path: "/Applications/Screen OCR.app/Contents/Resources/python-runtime/bin/python"
+        )
+
+        XCTAssertEqual(issue.statusText, "OCR 설치 필요")
+        XCTAssertEqual(issue.alertTitle, "OCR 런타임 설치가 필요합니다")
+        XCTAssertTrue(issue.userFacingDetail.contains("Python"))
+        XCTAssertTrue(issue.recoverySuggestion?.contains("최신 Screen OCR 릴리즈") == true)
+        XCTAssertTrue(issue.shouldOfferReleasePage)
+    }
+
+    func testOCRRuntimeIssueClassifiesBuildMachinePythonFrameworkLink() {
+        let issue = OCRRuntimeIssue.classifyRuntimeCheckFailure(
+            exitCode: 134,
+            stdout: "",
+            stderr: """
+            dyld: Library not loaded: /opt/homebrew/Cellar/python@3.12/3.12.13_2/Frameworks/Python.framework/Versions/3.12/Python
+            """
+        )
+
+        XCTAssertEqual(issue.reason, .brokenEmbeddedRuntime)
+        XCTAssertEqual(issue.statusText, "OCR 설치 필요")
+        XCTAssertTrue(issue.userFacingDetail.contains("손상"))
+        XCTAssertTrue(issue.recoverySuggestion?.contains("다시 설치") == true)
+        XCTAssertTrue(issue.shouldOfferReleasePage)
+    }
+
+    func testOCRRuntimeIssueDoesNotOfferReleasePageForDevelopmentVenvSetup() {
+        let issue = OCRRuntimeIssue.missingPython(path: "/repo/.venv-ocr/bin/python")
+
+        XCTAssertFalse(issue.shouldOfferReleasePage)
+        XCTAssertTrue(issue.recoverySuggestion?.contains("scripts/setup_ocr_env.sh") == true)
+    }
+
     func testPersistentPythonSidecarOCRTimesOutWhenWorkerHangs() async throws {
         let executable = try makeExecutableScript(
             name: "fake-worker-hang",

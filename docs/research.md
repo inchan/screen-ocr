@@ -49,7 +49,7 @@ Sources:
 - App Sandbox: https://developer.apple.com/documentation/security/app_sandbox
 
 Current fact snapshot:
-- `Cmd+Shift+0` is feasible as a global shortcut target, but registration can fail due to app/user/global conflicts and must be observable.
+- `Cmd+Shift+2` is feasible as the default global shortcut target. `Cmd+Shift+0` remains a feasible fallback, and registration can fail due to app/user/global conflicts and must be observable.
 - The minimal-permission shortcut path is `RegisterEventHotKey`. Avoid `NSEvent.addGlobalMonitorForEvents` for the default path because key monitoring requires Accessibility trust and global monitors only observe events.
 - Avoid `CGEventTap` unless raw event filtering becomes necessary, because event taps can require Accessibility or Input Monitoring permission.
 - Screen capture should use ScreenCaptureKit rather than deprecated CoreGraphics capture APIs. macOS 15 notes call out deprecated capture API privacy warnings and migration to ScreenCaptureKit.

@@ -10,7 +10,7 @@ Primary user: a macOS user who repeatedly needs to extract Korean and English te
 
 ## Core Behavior
 
-1. The user presses `Cmd+Shift+0`.
+1. The user presses `Cmd+Shift+2` (or `Cmd+Shift+0` if the default shortcut was unavailable and the app registered its fallback).
 2. The app starts a region selection capture flow if the shortcut is registered.
 3. The user selects a rectangular screen region.
 4. The app obtains an image for that region.
@@ -26,7 +26,7 @@ Primary user: a macOS user who repeatedly needs to extract Korean and English te
 - Default UI: `MenuBarExtra` or `NSStatusItem` with `LSUIElement=true`.
 - Settings UI: macOS-style two-pane window with a left sidebar (`General`, `Capture`, `Engine`) and right-side sectioned form details. Settings text follows OS language: Korean for Korean OS language, English otherwise.
 - Settings > General shows app version and update controls at the bottom. Automatic update checks default to off. Manual checks are always user initiated, automatic download/install is disabled, and installing a prepared update requires an explicit install/restart action.
-- Default shortcut: `Cmd+Shift+0` through `RegisterEventHotKey`.
+- Default shortcut: `Cmd+Shift+2` through `RegisterEventHotKey`; fallback shortcut: `Cmd+Shift+0` when the default cannot be registered. If a user explicitly records `Cmd+Shift+0` in Settings, it is preserved as that user's configured shortcut rather than treated as automatic fallback.
 - Capture: ScreenCaptureKit region capture. The implementation uses direct display-agnostic rect capture on macOS 15.2+ and a display-filter/sourceRect fallback for macOS 14+.
 - OCR: local Python PaddleOCR sidecar by default; Apple Vision may be selected on macOS where the Vision framework is available.
 - Default language profile: Korean plus English.
@@ -36,10 +36,11 @@ Primary user: a macOS user who repeatedly needs to extract Korean and English te
 
 - The app reuses a long-lived PaddleOCR worker over JSONL (one request, one newline-delimited response). The Swift client reads responses with a buffered line reader.
 - Each OCR request is bounded by a hard timeout. On timeout the worker process is terminated and the next request restarts it, so a hung worker never freezes the menu-bar app.
+- Before starting PaddleOCR capture or prewarming, the app checks that the selected OCR runtime can launch, reports a missing/incompatible/broken runtime as `OCR 설치 필요`, writes diagnostics, and shows an install/setup alert instead of surfacing a raw Python worker error.
 - The worker response carries `text` and per-line `{text, score}`; it omits detection `box` polygons because the app does not consume them. The one-shot `screen_ocr_sidecar.ocr` CLI still emits `box`.
 - Settings expose the OCR engine. PaddleOCR remains the default; Apple Vision is disabled on platforms where Vision is unavailable.
 - Updates are checked through a Sparkle appcast, not the GitHub Releases API. GitHub Releases host the downloadable unsigned artifact; `docs/appcast.xml` is the stable feed served through GitHub Pages. Automatic update checks are only supported from an installed app under `/Applications`; other locations should show a move-to-Applications guidance state instead of starting Sparkle.
-- When PaddleOCR is selected, settings expose a Paddle worker-count control. The default `Auto` mode does not set `SCREEN_OCR_REC_WORKERS`, so the Python worker uses its existing CPU-count heuristic. Numeric values set `SCREEN_OCR_REC_WORKERS` for the next Paddle worker process.
+- When PaddleOCR is selected, settings expose a Paddle worker-count control. The default `Auto` mode does not set `SCREEN_OCR_REC_WORKERS`, so the Python worker uses its safe in-process recognizer path. Numeric values set `SCREEN_OCR_REC_WORKERS` for the next Paddle worker process and opt into recognizer parallelism.
 
 ### Configuration knobs (environment variables)
 
@@ -86,7 +87,7 @@ Feature: Screen region OCR
     Given the app is running in the menu bar
     And screen capture permission is available
     And PaddleOCR is installed locally
-    When the user presses Cmd+Shift+0
+    When the user presses Cmd+Shift+2
     And selects a region containing "Hello 123"
     Then the clipboard should contain "Hello 123"
     And the app should show "📋 Copied to clipboard" below the menu bar item
@@ -101,14 +102,21 @@ Feature: Screen region OCR
 
   Scenario: Missing screen capture permission is actionable
     Given screen capture permission is not available
-    When the user presses Cmd+Shift+0
+    When the user presses Cmd+Shift+2
     Then the app should not run OCR
     And the menu bar status should show that permission is required
     And opening app Settings should focus the Capture permission controls
     And the System Settings helper should show where to drag the app icon
 
   Scenario: Shortcut registration failure is visible
-    Given Cmd+Shift+0 is unavailable
+    Given Cmd+Shift+2 is unavailable
+    When the app starts
+    Then the app should try Cmd+Shift+0 as the fallback shortcut
+    And the menu bar status should show the registered fallback if it succeeds
+
+  Scenario: Shortcut registration total failure is visible
+    Given Cmd+Shift+2 is unavailable
+    And Cmd+Shift+0 is unavailable
     When the app starts
     Then the menu bar status should show that the shortcut is unavailable
     And the user should be able to choose a different shortcut in a later settings flow

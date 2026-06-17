@@ -36,7 +36,7 @@ Hotkey does not fire:
 - Check `RegisterEventHotKey` registration result.
 - Check `artifacts/app/latest-status.json` for `hotkey_registered` or `hotkey_unavailable`.
 - Check `artifacts/debug-runs/latest-pair.json` for the latest paired debug capture.
-- For each `Cmd+Shift+0` run, inspect matching `artifacts/debug-runs/<run-id>.png` and `artifacts/debug-runs/<run-id>.txt` files.
+- For each `Cmd+Shift+2` run (or fallback `Cmd+Shift+0` run), inspect matching `artifacts/debug-runs/<run-id>.png` and `artifacts/debug-runs/<run-id>.txt` files.
 - Accessibility/Input Monitoring should not be required for the default shortcut path; if it is, record the implementation and OS evidence.
 - Verify app is running and status item is alive.
 

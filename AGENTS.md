@@ -3,7 +3,7 @@
 This repository builds a macOS menu bar utility for screenshot OCR.
 
 The product contract is:
-- `Cmd+Shift+0` starts a region capture flow that feels close to macOS `Cmd+Shift+4`.
+- `Cmd+Shift+2` starts a region capture flow that feels close to macOS `Cmd+Shift+4`; if the default cannot be registered, the app falls back to `Cmd+Shift+0`.
 - The selected screen region is captured as an image and made available to the app pipeline.
 - PaddleOCR reads the captured image locally.
 - The clipboard ends with recognized text when OCR succeeds.
@@ -60,7 +60,7 @@ Do not delegate the immediate blocking task when the main agent can resolve it f
 These are starting defaults, not permanent decisions:
 
 - macOS host: Swift/AppKit menu bar app.
-- Hotkey: global `Cmd+Shift+0`, implemented through a native global shortcut path validated by a spike.
+- Hotkey: global `Cmd+Shift+2` by default with `Cmd+Shift+0` fallback, implemented through a native global shortcut path validated by a spike.
 - Capture: region capture using a native macOS API or a minimal helper path, with permission handling documented before production polish.
 - OCR: local PaddleOCR only, called through a Python sidecar/venv until a better minimal integration is proven.
 - OCR profile: Korean-first mixed Korean/English, CPU-only by default.
@@ -112,7 +112,7 @@ Patch this `AGENTS.md` only when a feedback entry proves that a durable reposito
 
 Before marking the goal complete, audit every user requirement against direct evidence:
 
-- `Cmd+Shift+0` capture flow works on macOS.
+- `Cmd+Shift+2` capture flow works on macOS, with `Cmd+Shift+0` fallback when the default is unavailable.
 - PaddleOCR reads captured image text locally.
 - Clipboard contains OCR text after success.
 - Menu bar app behavior is implemented.
@@ -121,4 +121,3 @@ Before marking the goal complete, audit every user requirement against direct ev
 - Known gaps are either eliminated or explicitly outside the accepted scope.
 
 Missing or indirect evidence means the goal is not complete.
-

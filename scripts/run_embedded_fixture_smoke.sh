@@ -5,7 +5,11 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
 APP_PATH="${1:-dist/Screen OCR.app}"
-EXECUTABLE="$ROOT/$APP_PATH/Contents/MacOS/ScreenOCRApp"
+if [[ "$APP_PATH" == /* ]]; then
+  EXECUTABLE="$APP_PATH/Contents/MacOS/ScreenOCRApp"
+else
+  EXECUTABLE="$ROOT/$APP_PATH/Contents/MacOS/ScreenOCRApp"
+fi
 STATUS_PATH="$ROOT/artifacts/app/latest-status.json"
 REPORT_PATH="$ROOT/artifacts/app/latest-embedded-fixture-smoke.json"
 

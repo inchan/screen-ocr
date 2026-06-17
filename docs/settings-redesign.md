@@ -67,7 +67,7 @@ Sections:
 - PaddleOCR
   - Worker count selector: `Auto`, `1...10`
   - Shown only when `PaddleOCR` is selected.
-  - `Auto` keeps the existing CPU-count worker calculation by not setting `SCREEN_OCR_REC_WORKERS`.
+  - `Auto` keeps the safe single-process default by not setting `SCREEN_OCR_REC_WORKERS`; numeric values opt into recognizer parallelism.
 
 ## Layout Rules
 
@@ -132,7 +132,7 @@ Sections:
 |  view  Capture     |    Engine          [PaddleOCR v]             |
 |  cpu   Engine      |                                              |
 |                    |  PaddleOCR                                   |
-|                    |    Workers         [Auto (CPU based) v]      |
+|                    |    Workers         [Auto (safe default) v]   |
 |                    |                    Applies to the next       |
 |                    |                    PaddleOCR worker.         |
 +--------------------+----------------------------------------------+

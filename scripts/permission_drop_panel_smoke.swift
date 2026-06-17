@@ -16,8 +16,17 @@ struct PermissionDropPanelSmoke {
             relaunchTarget: DummyTarget(),
             relaunchAction: #selector(DummyTarget.relaunchApp)
         )
+        let panel = PermissionDropPanel(
+            contentRect: CGRect(origin: .zero, size: size),
+            styleMask: [.titled, .closable, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
 
         assert(root.identifier?.rawValue == "permission.drop.panel", "panel content has identifier")
+        assert(!panel.canBecomeKey, "permission helper cannot become key window")
+        assert(!panel.canBecomeMain, "permission helper cannot become main window")
+        assert(panel.styleMask.contains(.nonactivatingPanel), "permission helper is nonactivating")
         assert(findView(root, identifier: "permission.drop.icon") != nil, "draggable app icon exists")
         guard let direction = findView(root, identifier: "permission.drop.direction") as? NSTextField else {
             fail("direction cue exists")

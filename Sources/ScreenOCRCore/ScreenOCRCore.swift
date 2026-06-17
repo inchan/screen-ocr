@@ -1110,6 +1110,146 @@ public protocol OCRDiagnosable {
     var failureDetail: OCRFailureDetail { get }
 }
 
+public enum OCRRuntimeIssueReason: String, Sendable, Equatable {
+    case missingPython = "missing_python"
+    case missingSidecar = "missing_sidecar"
+    case incompatiblePython = "incompatible_python"
+    case missingModules = "missing_modules"
+    case brokenEmbeddedRuntime = "broken_embedded_runtime"
+    case runtimeCheckFailed = "runtime_check_failed"
+    case runtimeCheckTimedOut = "runtime_check_timed_out"
+}
+
+public struct OCRRuntimeIssue: Error, LocalizedError, Sendable, Equatable {
+    public let reason: OCRRuntimeIssueReason
+    public let detail: String
+    public let exitCode: Int32?
+    public let missingModules: [String]
+
+    public init(
+        reason: OCRRuntimeIssueReason,
+        detail: String,
+        exitCode: Int32? = nil,
+        missingModules: [String] = []
+    ) {
+        self.reason = reason
+        self.detail = detail
+        self.exitCode = exitCode
+        self.missingModules = missingModules
+    }
+
+    public static func missingPython(path: String) -> OCRRuntimeIssue {
+        OCRRuntimeIssue(reason: .missingPython, detail: path)
+    }
+
+    public static func missingSidecar(path: String) -> OCRRuntimeIssue {
+        OCRRuntimeIssue(reason: .missingSidecar, detail: path)
+    }
+
+    public static func incompatiblePython(version: String) -> OCRRuntimeIssue {
+        OCRRuntimeIssue(reason: .incompatiblePython, detail: version)
+    }
+
+    public static func missingModules(_ modules: [String]) -> OCRRuntimeIssue {
+        OCRRuntimeIssue(
+            reason: .missingModules,
+            detail: modules.joined(separator: ", "),
+            missingModules: modules
+        )
+    }
+
+    public static func runtimeCheckTimedOut(ms: Int) -> OCRRuntimeIssue {
+        OCRRuntimeIssue(reason: .runtimeCheckTimedOut, detail: "\(ms) ms")
+    }
+
+    public static func classifyRuntimeCheckFailure(
+        exitCode: Int32,
+        stdout: String,
+        stderr: String
+    ) -> OCRRuntimeIssue {
+        let combined = "\(stdout)\n\(stderr)"
+        let summary = summarize(combined)
+        if combined.contains("/opt/homebrew/")
+            || combined.contains("/Users/runner/")
+            || combined.contains("/Library/Frameworks/Python.framework")
+            || (combined.contains("Library not loaded") && combined.contains("Python.framework")) {
+            return OCRRuntimeIssue(
+                reason: .brokenEmbeddedRuntime,
+                detail: summary,
+                exitCode: exitCode
+            )
+        }
+
+        return OCRRuntimeIssue(
+            reason: .runtimeCheckFailed,
+            detail: summary,
+            exitCode: exitCode
+        )
+    }
+
+    public var statusText: String {
+        "OCR 설치 필요"
+    }
+
+    public var alertTitle: String {
+        "OCR 런타임 설치가 필요합니다"
+    }
+
+    public var userFacingDetail: String {
+        switch reason {
+        case .missingPython:
+            return "PaddleOCR을 실행할 Python 런타임을 찾을 수 없습니다."
+        case .missingSidecar:
+            return "PaddleOCR 사이드카 파일을 찾을 수 없습니다."
+        case .incompatiblePython:
+            return "설치된 Python 버전이 PaddleOCR 지원 범위와 맞지 않습니다. 필요한 범위는 Python 3.9-3.13입니다."
+        case .missingModules:
+            return "PaddleOCR 실행에 필요한 Python 패키지가 없습니다: \(detail)"
+        case .brokenEmbeddedRuntime:
+            return "앱에 포함된 OCR 런타임이 손상되었거나 이 Mac으로 옮겨진 뒤 내부 Python 링크가 맞지 않습니다."
+        case .runtimeCheckFailed:
+            return "PaddleOCR 런타임 사전 검사가 실패했습니다."
+        case .runtimeCheckTimedOut:
+            return "PaddleOCR 런타임 사전 검사가 제한 시간 안에 끝나지 않았습니다."
+        }
+    }
+
+    public var errorDescription: String? {
+        if detail.isEmpty {
+            return userFacingDetail
+        }
+        return "\(userFacingDetail) \(detail)"
+    }
+
+    public var recoverySuggestion: String? {
+        switch reason {
+        case .missingPython where detail.contains(".venv-ocr"):
+            return "개발 환경에서는 Python 3.9-3.13을 설치한 뒤 `scripts/setup_ocr_env.sh`를 실행하고 앱을 다시 시작하세요."
+        case .missingSidecar where !detail.contains(".app/Contents/Resources/"):
+            return "개발 환경에서는 저장소 루트에서 앱을 실행하거나 `SCREEN_OCR_PROJECT_ROOT`를 올바르게 설정하세요."
+        default:
+            return "설치된 앱이라면 최신 Screen OCR 릴리즈를 다시 설치하세요. 개발 환경이라면 `scripts/setup_ocr_env.sh`로 OCR 환경을 준비한 뒤 앱을 다시 시작하세요."
+        }
+    }
+
+    public var shouldOfferReleasePage: Bool {
+        switch reason {
+        case .missingPython where detail.contains(".venv-ocr"):
+            return false
+        case .missingSidecar where !detail.contains(".app/Contents/Resources/"):
+            return false
+        default:
+            return true
+        }
+    }
+
+    private static func summarize(_ text: String, limit: Int = 500) -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "No stderr/stdout detail" }
+        return trimmed.count > limit ? String(trimmed.prefix(limit)) + "..." : trimmed
+    }
+}
+
 public enum PersistentPythonSidecarOCRError: Error, LocalizedError, Sendable, OCRDiagnosable {
     case startFailed(message: String)
     case workerUnavailable

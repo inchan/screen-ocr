@@ -26,6 +26,31 @@ if grep -E -q '/opt/homebrew|/Users/runner|/Library/Frameworks/Python\.framework
   fail "embedded Python wrapper must not point at a build-machine Python"
 fi
 
+reject_build_machine_python_link() {
+  local binary="$1"
+  local linked_libraries
+
+  linked_libraries="$(otool -L "$binary" 2>&1)"
+  if printf '%s\n' "$linked_libraries" | sed '1d' | grep -E -q '/opt/homebrew|/Users/runner|/Library/Frameworks/Python\.framework'; then
+    printf '%s\n' "$linked_libraries" >&2
+    fail "embedded Python framework binary links to a build-machine Python framework: $binary"
+  fi
+}
+
+framework_python_count=0
+for framework_binary in \
+  "$PYTHON_FRAMEWORK"/Versions/*/bin/python3.* \
+  "$PYTHON_FRAMEWORK"/Versions/*/Resources/Python.app/Contents/MacOS/Python \
+  "$PYTHON_FRAMEWORK"/Versions/*/Python
+do
+  [[ -f "$framework_binary" ]] || continue
+  reject_build_machine_python_link "$framework_binary"
+  case "$framework_binary" in
+    */bin/python3.*) framework_python_count=$((framework_python_count + 1)) ;;
+  esac
+done
+[[ "$framework_python_count" -gt 0 ]] || fail "missing executable inside embedded Python framework"
+
 PYTHONPATH="$RESOURCES_PATH/sidecar" "$PYTHON_BIN" - <<'PY'
 import importlib.util
 import sys
@@ -36,15 +61,5 @@ for module_name in ("paddleocr", "paddle", "screen_ocr_sidecar.ocr"):
 
 print(f"PASS: embedded OCR environment wrapper uses Python {sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro} and has OCR modules")
 PY
-
-framework_python="$(
-  find "$PYTHON_FRAMEWORK/Versions" -path '*/bin/python3.*' -type f -perm -111 -print -quit 2>/dev/null || true
-)"
-[[ -n "$framework_python" ]] || fail "missing executable inside embedded Python framework"
-linked_libraries="$(otool -L "$framework_python" 2>&1)"
-if printf '%s\n' "$linked_libraries" | grep -E -q '/opt/homebrew|/Users/runner|/Library/Frameworks/Python\.framework'; then
-  printf '%s\n' "$linked_libraries" >&2
-  fail "embedded Python executable links to a build-machine Python framework"
-fi
 
 printf 'PASS: verified embedded runtime bundle: %s\n' "$APP_PATH"

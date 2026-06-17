@@ -1,6 +1,271 @@
 # Validation Report
 
-Last updated: 2026-06-12.
+Last updated: 2026-06-17.
+
+## 2026-06-17 Cycle: Hotkey default/fallback and permission guide focus
+
+Scope: Change the capture shortcut policy to default `Cmd+Shift+2` with
+`Cmd+Shift+0` fallback, and prevent the Screen Recording permission drag guide
+from stealing keyboard focus from System Settings authentication prompts.
+
+Verification evidence:
+- `bash scripts/run_hotkey_recorder_layout_smoke.sh` passed. It now verifies:
+  default `⇧⌘2`, fallback `⇧⌘0`, default-registration-failure fallback policy,
+  startup retry of the new default when a stored automatic fallback shortcut is
+  present, and preservation of a user-selected `⇧⌘0` shortcut.
+- `bash scripts/run_permission_drop_panel_smoke.sh` passed. It now verifies the
+  helper panel uses `.nonactivatingPanel` and cannot become key or main, while
+  preserving the draggable app icon, left arrow, and minimal instruction text.
+- `bash -n scripts/run_hotkey_smoke.sh scripts/run_capture_alignment_smoke.sh scripts/agent_gate.sh`
+  passed after updating scripted hotkey synthesis to `Cmd+Shift+2`.
+- `swift build --product ScreenOCRApp` passed. Existing warnings remain the
+  known `String(cString:)` deprecation and macOS 14 `CGDisplayStream`
+  deprecation warning.
+- `scripts/check_docs_links.py` passed with 52 local documentation links
+  checked after adding `docs/script-inventory.md`.
+- Required gate: `scripts/agent_gate.sh` exited `AGENT_GATE=FAIL` with the
+  known single host-toolchain failure:
+  `swift test unavailable because xctest is not installed or xcode-select does not point at a full Xcode`.
+  The remaining gate checks passed, including required-file checks
+  (`required_files=12`), spec keyword checks for `Cmd+Shift+2` and
+  `Cmd+Shift+0`, documentation link validation, fixture corpus validation,
+  AppKit layout smokes, Swift product builds, local bundle/signature
+  verification, OCR environment check, and Python sidecar tests (`30 tests`, 0
+  failures).
+- After `agent_gate` rebuilt the non-embedded development bundle, the final
+  release bundle was restored with
+  `SCREEN_OCR_EMBED_RUNTIME=1 SCREEN_OCR_CODESIGN_IDENTITY=- scripts/build_app_bundle.sh`.
+  Final `scripts/verify_app_bundle.sh`,
+  `scripts/verify_embedded_runtime_bundle.sh`, and
+  `scripts/verify_app_signature.sh` all passed for `dist/Screen OCR.app`.
+- `scripts/run_embedded_fixture_smoke.sh` passed for `dist/Screen OCR.app` with
+  clipboard text `OCR테스트\nHello 123`; the post-smoke DiagnosticReports check
+  found no new `Python-*.ips` paths.
+- `/Applications/Screen OCR.app` was replaced with the fixed 0.0.5 bundle. The
+  previous 0.0.4 app was preserved at
+  `/Applications/Screen OCR.app.backup-0.0.4-20260617114639`; the superseded
+  intermediate 0.0.5 candidate was preserved at
+  `/Applications/Screen OCR.app.backup-0.0.5-20260617115224`.
+- Installed app checks passed: `CFBundleShortVersionString=0.0.5`,
+  `scripts/verify_embedded_runtime_bundle.sh '/Applications/Screen OCR.app'`,
+  `scripts/verify_app_signature.sh '/Applications/Screen OCR.app'`, and
+  `scripts/run_embedded_fixture_smoke.sh '/Applications/Screen OCR.app'`.
+  The installed app bundle size is `857M`, and the installed-app post-smoke
+  DiagnosticReports check found no new `Python-*.ips` paths.
+- Final local artifact:
+  `dist/release/Screen-OCR-v0.0.5-unsigned-macos-arm64.zip`
+  (`247M`, SHA-256
+  `e05de33d98873571403d62f4e6673450bb1c1229d1648c6dc36bad9b3ad53b7a`).
+  `shasum -a 256 -c dist/release/Screen-OCR-v0.0.5-unsigned-macos-arm64.zip.sha256`
+  passed.
+
+Implementation evidence:
+- `HotkeyConfig.default` is now `⇧⌘2`; `HotkeyConfig.fallback` is `⇧⌘0`.
+- Startup registration tries `⇧⌘2` first for the default or an automatic
+  fallback state. If `⇧⌘2` is refused, it registers and persists `⇧⌘0` with an
+  automatic-fallback flag.
+- Legacy settings files that store `⇧⌘0` without the new fallback flag migrate
+  as automatic fallback. User-selected `⇧⌘0` writes the flag as false, so it is
+  preserved as the configured shortcut on later launches.
+- User-recorded custom shortcuts do not silently fall back on failure; they
+  still revert to the previously registered shortcut.
+- `PermissionDropPanel` subclasses `NSPanel` with `canBecomeKey=false` and
+  `canBecomeMain=false`, and uses `orderFrontRegardless()` instead of
+  `makeKeyAndOrderFront`.
+- `README.md` now links the primary docs, and `docs/script-inventory.md`
+  classifies gate, release, smoke, benchmark, and manual experiment scripts so
+  retained probes are documented instead of orphaned.
+
+## 2026-06-17 Cycle: Embedded Python crash-dialog containment
+
+Scope: Stop repeated macOS "Python quit unexpectedly" dialogs from the embedded
+PaddleOCR runtime, then rebuild and install a corrected local 0.0.4 candidate.
+
+Root-cause evidence:
+- The installed `/Applications/Screen OCR.app` was still `0.0.3`, but the latest
+  `Python-2026-06-17-103831.ips` crash report pointed at
+  `dist/Screen OCR.app/Contents/Frameworks/Python.framework/.../Python.app/...`
+  with parent process `Python`, exception `EXC_CRASH`, signal `SIGSEGV`.
+- That pattern matched Paddle recognizer child processes spawned by the release
+  candidate smoke, not the earlier 0.0.3 Homebrew-link failure.
+- With `SCREEN_OCR_REC_WORKERS` unset, the previous `Auto` path used a
+  CPU-count heuristic and could spawn up to six recognizer child processes,
+  making one shutdown hazard surface as multiple macOS crash dialogs.
+
+Verification evidence:
+- Red check before implementation:
+  `PYTHONPATH=sidecar .venv-ocr/bin/python -m unittest ...test_parallel_rec_default_worker_count_is_single_process_safe_default ...test_parallel_rec_invalid_worker_count_falls_back_to_safe_default`
+  failed because `_default_workers()` returned `6` instead of `1`.
+- Narrow regression tests after implementation passed, including
+  `test_single_worker_recognizer_runs_without_multiprocessing_pool`.
+- Full sidecar contract suite passed:
+  `PYTHONPATH=sidecar .venv-ocr/bin/python -m unittest sidecar.tests.test_ocr_contract`
+  ran 27 tests with 0 failures.
+- Final sidecar gate suite after the shutdown-path tweak passed:
+  `scripts/run_python_tests.sh` ran 30 tests with 0 failures.
+- `swift build` passed after settings copy/comment updates.
+- `SCREEN_OCR_EMBED_RUNTIME=1 SCREEN_OCR_CODESIGN_IDENTITY=- scripts/build_app_bundle.sh`
+  rebuilt `dist/Screen OCR.app`.
+- `scripts/verify_app_bundle.sh`, `scripts/verify_embedded_runtime_bundle.sh`,
+  and `scripts/verify_app_signature.sh` passed for `dist/Screen OCR.app`.
+- `scripts/run_embedded_fixture_smoke.sh` passed with clipboard text
+  `OCR테스트\nHello 123`.
+- Crash-report check after the dist smoke:
+  `find "$HOME/Library/Logs/DiagnosticReports" -name 'Python-*.ips' -newer artifacts/python-crash-marker -print`
+  returned no paths.
+- `/Applications/Screen OCR.app` was replaced with the fixed 0.0.4 bundle after
+  preserving the old app at
+  `/Applications/Screen OCR.app.backup-0.0.3-20260617104817`.
+- Installed app checks passed:
+  `scripts/verify_embedded_runtime_bundle.sh '/Applications/Screen OCR.app'`,
+  `scripts/verify_app_signature.sh '/Applications/Screen OCR.app'`, and
+  `scripts/run_embedded_fixture_smoke.sh '/Applications/Screen OCR.app'`.
+- Crash-report check after the installed-app smoke found 0 new
+  `Python-*.ips` files, and `ps aux | rg 'ScreenOCRApp|Screen OCR|screen_ocr_sidecar|Python.framework'`
+  showed no lingering app or OCR Python processes.
+- Required gate: `scripts/agent_gate.sh` exited `AGENT_GATE=FAIL` with the
+  known single host-toolchain failure:
+  `swift test unavailable because xctest is not installed or xcode-select does not point at a full Xcode`.
+  The remaining gate checks passed, including AppKit layout smokes, Swift
+  product builds, local bundle/signature verification, OCR environment check,
+  and Python sidecar tests (`30 tests`, 0 failures).
+- After `agent_gate` rebuilt the non-embedded development bundle, the final
+  release bundle was restored with
+  `SCREEN_OCR_EMBED_RUNTIME=1 SCREEN_OCR_CODESIGN_IDENTITY=- scripts/build_app_bundle.sh`.
+  Final `scripts/verify_app_bundle.sh`,
+  `scripts/verify_embedded_runtime_bundle.sh`, `scripts/verify_app_signature.sh`,
+  and `scripts/run_embedded_fixture_smoke.sh` all passed again, and the final
+  post-smoke DiagnosticReports check returned no new `Python-*.ips` paths.
+- Final local artifact, superseding the earlier 0.0.4 candidate below:
+  `dist/release/Screen-OCR-v0.0.4-unsigned-macos-arm64.zip`
+  (`247M`, SHA-256
+  `8361a7438f2394b5924f70b45196d4751657d19d6f37c2a51287e38ca05c753f`).
+
+Implementation evidence:
+- `Auto` now omits `SCREEN_OCR_REC_WORKERS` and the Python sidecar treats the
+  unset value as a safe in-process recognizer path.
+- Numeric worker counts still set `SCREEN_OCR_REC_WORKERS` and opt into the
+  existing multiprocessing recognizer pool for users who choose that tradeoff.
+- Settings copy now labels Auto as the safe default, and the fixture smoke script
+  accepts an absolute app path so installed `/Applications` builds can be
+  verified directly.
+
+## 2026-06-17 Cycle: 0.0.4 runtime-alert release candidate
+
+Scope: Self-review, fact-check, code-review, apply fixes, and prepare a local
+unsigned release candidate for the installed 0.0.3 Python runtime failure.
+
+Self-critical review findings:
+- The first implementation correctly diagnosed the broken embedded Python
+  runtime, but the runtime alert button mixed installed-app recovery with
+  development `.venv-ocr` setup. The alert action was refined so development
+  runtime setup issues do not offer the GitHub Releases action.
+- `agent_gate` previously surfaced a cryptic `no such module 'XCTest'` failure
+  on this host. The script now reports the missing `xctest` tool explicitly.
+
+Fact-check evidence:
+- `python3 --version` returned `Python 3.9.6`; the Mac is not missing Python in
+  general.
+- `brew install python@3.12` installed Homebrew Python 3.12.13 to match the
+  unsigned release workflow.
+- `SCREEN_OCR_PYTHON=/opt/homebrew/bin/python3.12 scripts/setup_ocr_env.sh`
+  prepared `.venv-ocr` with `paddlepaddle==3.3.0` and `paddleocr==3.6.0`.
+- `scripts/verify_ocr_runtime.sh` passed, including PaddlePaddle runtime check
+  and creation of a PaddleOCR instance.
+
+Verification evidence:
+- `scripts/run_python_tests.sh` passed 26 Python sidecar tests.
+- `swift build --product ScreenOCRApp` passed.
+- `swift build --product ScreenOCRSmoke` passed.
+- `bash -n scripts/build_app_bundle.sh scripts/verify_embedded_runtime_bundle.sh scripts/agent_gate.sh` passed.
+- `SCREEN_OCR_EMBED_RUNTIME=1 SCREEN_OCR_CODESIGN_IDENTITY=- scripts/build_app_bundle.sh` built `dist/Screen OCR.app` with embedded OCR resources and version `0.0.4`.
+- `scripts/verify_app_bundle.sh` passed.
+- `scripts/verify_embedded_runtime_bundle.sh` passed and confirmed the embedded
+  wrapper uses Python 3.12.13 with OCR modules.
+- `scripts/verify_app_signature.sh` passed.
+- `scripts/run_embedded_fixture_smoke.sh` passed and copied
+  `OCR테스트\nHello 123`.
+- `shasum -a 256 -c dist/release/Screen-OCR-v0.0.4-unsigned-macos-arm64.zip.sha256`
+  passed.
+- Final local artifact:
+  `dist/release/Screen-OCR-v0.0.4-unsigned-macos-arm64.zip`
+  (`256M`, SHA-256
+  `e3573a1aba882ed2ab8daf88bf35b1f2474aff8bfb50180223ab096de3a32094`).
+- Final embedded app bundle size: `857M`.
+
+Known verification gap:
+- `scripts/agent_gate.sh` still exits `AGENT_GATE=FAIL` with one failure because
+  this Mac is using `/Library/Developer/CommandLineTools` and `xcrun --find
+  xctest` fails. All later gate steps pass, including AppKit layout smokes,
+  Swift product builds, local bundle verification, signature verification, OCR
+  environment check, and Python sidecar tests.
+- A hosted GitHub Release was not published from this local cycle. External
+  publish/push remains a credential-gated action.
+
+## 2026-06-16 Cycle: Installed 0.0.3 Python runtime failure
+
+Scope: Diagnose the Python error observed after installing the latest unsigned
+release on the local Mac and tighten the embedded-runtime release checks.
+
+Verified on the local macOS host:
+- Installed app version: `/Applications/Screen OCR.app` has
+  `CFBundleShortVersionString=0.0.3`, matching `VERSION`.
+- System Python exists: `python3 --version` returned `Python 3.9.6`.
+  `SCREEN_OCR_PYTHON=python3 scripts/check_ocr_env.sh` passed, so the machine
+  is not missing a Paddle-compatible Python in general.
+- Development default Python is absent: `python3.12 --version` failed with
+  `command not found`, and the repo has no `.venv-ocr`. This explains local
+  development environment setup failures, but the installed release should use
+  its embedded runtime instead.
+- App diagnostics show the app reached startup and hotkey registration:
+  `~/Library/Application Support/Screen OCR/artifacts/app/latest-status.json`
+  reported `hotkey_registered`, while
+  `latest-worker-status.json` reported
+  `Persistent OCR worker closed its output unexpectedly`.
+- Embedded runtime verification against the installed app failed before OCR
+  import because
+  `Contents/Frameworks/Python.framework/Versions/3.12/Resources/Python.app/Contents/MacOS/Python`
+  links to
+  `/opt/homebrew/Cellar/python@3.12/3.12.13_2/Frameworks/Python.framework/Versions/3.12/Python`.
+  That path is a build-machine Homebrew path and does not exist on this Mac.
+- Script syntax check passed:
+  `bash -n scripts/build_app_bundle.sh scripts/verify_embedded_runtime_bundle.sh`.
+- App build after adding runtime setup guidance passed:
+  `swift build --product ScreenOCRApp`.
+- Smoke executable build passed: `swift build --product ScreenOCRSmoke`.
+- Full Swift tests could not run on this host because `swift test` fails before
+  executing tests with `no such module 'XCTest'`.
+- Full `SCREEN_OCR_PYTHON=python3 scripts/agent_gate.sh` failed for existing
+  local-environment reasons: `swift test` cannot import `XCTest`, local bundle
+  verification requires `.venv-ocr/bin/python` for the development bundle, and
+  Python sidecar tests under bare `python3` cannot import Pillow.
+
+Implementation evidence:
+- `scripts/verify_embedded_runtime_bundle.sh` now rejects build-machine Python
+  links in `bin/python3.*`, `Resources/Python.app/Contents/MacOS/Python`, and
+  the framework `Python` library before attempting to execute the embedded
+  interpreter.
+- `scripts/build_app_bundle.sh` now patches both the copied framework
+  `bin/python<version>` launcher and the nested `Python.app` launcher so they
+  resolve the Python library inside the app bundle.
+- `OCRRuntimeIssue` classifies missing Python, missing sidecar, incompatible
+  Python, missing modules, broken embedded runtimes, failed checks, and timed
+  out checks with user-facing install/setup guidance.
+- `ScreenOCRApp` now preflights the PaddleOCR runtime before worker prewarm,
+  hotkey capture, and fixture OCR. Failures set menu status to `OCR 설치 필요`,
+  write `runtime_setup_required` diagnostics, and show an install/setup alert
+  with the GitHub Releases page action.
+- `docs/test-plan.md` now makes build-machine Python link rejection explicit in
+  the embedded OCR-resource smoke.
+
+Known verification gap:
+- The installed `/Applications/Screen OCR.app` remains the already-published
+  broken 0.0.3 artifact until it is replaced or locally repaired. A fresh
+  embedded-runtime rebuild was not run in this cycle because this checkout lacks
+  `.venv-ocr`.
+- The new AppKit alert path is compile-verified but not screenshot/smoke-tested
+  because the current host cannot run the Swift XCTest suite and the installed
+  app has not been replaced with a fixed build.
 
 ## 2026-06-12 Cycle: Experimental Sparkle updater path
 
@@ -267,7 +532,7 @@ Next verification step (macOS host): run `swift test`, `swift build --product Sc
 
 ## Current Claim
 
-The repository has an autonomous operating-system layer, a tested core OCR pipeline, a local PaddleOCR sidecar, an optional Apple Vision OCR engine, a local `.app` bundle build, and a macOS menu bar utility whose scripted end-to-end smoke verifies `Cmd+Shift+0` -> drag selection -> ScreenCaptureKit capture -> OCR -> clipboard. PaddleOCR remains the default engine; Apple Vision is selectable for fast in-process OCR while its default-replacement quality gate remains open.
+The repository has an autonomous operating-system layer, a tested core OCR pipeline, a local PaddleOCR sidecar, an optional Apple Vision OCR engine, a local `.app` bundle build, and a macOS menu bar utility whose scripted end-to-end smoke verifies `Cmd+Shift+2` -> drag selection -> ScreenCaptureKit capture -> OCR -> clipboard, with `Cmd+Shift+0` retained as startup fallback. PaddleOCR remains the default engine; Apple Vision is selectable for fast in-process OCR while its default-replacement quality gate remains open.
 
 ## Evidence To Collect
 
